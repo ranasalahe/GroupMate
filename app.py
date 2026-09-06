@@ -21,6 +21,8 @@ load_dotenv()
 OPENAI_MODEL = "gpt-4o"
 FALLING_BEHIND_THRESHOLD = 0.2  # a member is "behind" if their completion
 # fraction trails the group's time-elapsed fraction by more than this.
+MAX_DESCRIPTION_CHARS = 4000
+OPENAI_JSON_RETRIES = 2  # extra attempts if the model returns malformed JSON
 
 _supabase_client = None
 _openai_client = None
@@ -46,28 +48,45 @@ def get_openai():
 # AI calls
 # ---------------------------------------------------------------------------
 
+def _call_openai_json(system_prompt: str, user_prompt: str) -> dict:
+    """Call OpenAI in JSON mode, retrying if the model returns malformed JSON.
+
+    The model is asked to emit JSON and (with response_format=json_object)
+    is constrained to produce syntactically valid JSON, but can still omit
+    expected keys or wrap values unexpectedly — retrying a couple of times
+    is cheap insurance against an occasional bad sample.
+    """
+    last_error = None
+    for _ in range(OPENAI_JSON_RETRIES + 1):
+        response = get_openai().chat.completions.create(
+            model=OPENAI_MODEL,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        try:
+            return json.loads(response.choices[0].message.content)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    raise RuntimeError("OpenAI did not return valid JSON after retrying") from last_error
+
+
 def generate_tags(description: str) -> list[str]:
     """Ask the model for 6-10 project-specific skill tags."""
-    response = get_openai().chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You generate skill tags for student group projects. "
-                    "Given a project description, respond ONLY with a JSON "
-                    'object of the form {"tags": ["tag1", "tag2", ...]} '
-                    "containing 6 to 10 tags. Tags must be specific to what "
-                    "this project actually needs (e.g. 'React frontend', "
-                    "'survey design', 'financial modeling'), not generic "
-                    "soft skills like 'teamwork' or 'communication'."
-                ),
-            },
-            {"role": "user", "content": description},
-        ],
+    data = _call_openai_json(
+        system_prompt=(
+            "You generate skill tags for student group projects. "
+            "Given a project description, respond ONLY with a JSON "
+            'object of the form {"tags": ["tag1", "tag2", ...]} '
+            "containing 6 to 10 tags. Tags must be specific to what "
+            "this project actually needs (e.g. 'React frontend', "
+            "'survey design', 'financial modeling'), not generic "
+            "soft skills like 'teamwork' or 'communication'."
+        ),
+        user_prompt=description,
     )
-    data = json.loads(response.choices[0].message.content)
     return list(data["tags"])
 
 
@@ -82,39 +101,28 @@ def ai_distribute_tasks(description: str, members: list[dict]) -> list[dict]:
         f"- {m['name']}: {', '.join(m['strong_suits']) or 'no tags selected'}"
         for m in members
     )
-    response = get_openai().chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You split a student group project into concrete tasks "
-                    "and assign them fairly across members based on skill-tag "
-                    "match and balanced total workload (estimated_hours per "
-                    "member should be roughly even). If a task is large "
-                    "enough that splitting it across multiple members is "
-                    "more efficient, mark it shared and list every member "
-                    "working on it in shared_with; otherwise shared_with is "
-                    "empty and assigned_to names the single owner. Respond "
-                    "ONLY with a JSON object of the form "
-                    '{"tasks": [{"title": str, "estimated_hours": number, '
-                    '"assigned_to": str, "shared": bool, '
-                    '"shared_with": [str, ...]}, ...]}. '
-                    "Every member name used must exactly match one of the "
-                    "names given."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Project description:\n{description}\n\n"
-                    f"Members and their strong suits:\n{member_summary}"
-                ),
-            },
-        ],
+    data = _call_openai_json(
+        system_prompt=(
+            "You split a student group project into concrete tasks "
+            "and assign them fairly across members based on skill-tag "
+            "match and balanced total workload (estimated_hours per "
+            "member should be roughly even). If a task is large "
+            "enough that splitting it across multiple members is "
+            "more efficient, mark it shared and list every member "
+            "working on it in shared_with; otherwise shared_with is "
+            "empty and assigned_to names the single owner. Respond "
+            "ONLY with a JSON object of the form "
+            '{"tasks": [{"title": str, "estimated_hours": number, '
+            '"assigned_to": str, "shared": bool, '
+            '"shared_with": [str, ...]}, ...]}. '
+            "Every member name used must exactly match one of the "
+            "names given."
+        ),
+        user_prompt=(
+            f"Project description:\n{description}\n\n"
+            f"Members and their strong suits:\n{member_summary}"
+        ),
     )
-    data = json.loads(response.choices[0].message.content)
     return list(data["tasks"])
 
 
@@ -126,6 +134,9 @@ def create_group(name: str, description: str, deadline_str: str):
     if not name.strip() or not description.strip() or not deadline_str.strip():
         return "", "Please fill in name, description, and deadline.", []
 
+    if len(description) > MAX_DESCRIPTION_CHARS:
+        return "", f"Description is too long (max {MAX_DESCRIPTION_CHARS} characters).", []
+
     try:
         deadline = date_parser.parse(deadline_str)
         if deadline.tzinfo is None:
@@ -133,21 +144,28 @@ def create_group(name: str, description: str, deadline_str: str):
     except (ValueError, OverflowError):
         return "", "Could not parse that deadline. Try e.g. 2026-09-20 18:00.", []
 
-    tags = generate_tags(description)
+    if deadline <= datetime.now(timezone.utc):
+        return "", "Deadline must be in the future.", []
 
-    db = get_supabase()
-    result = (
-        db.table("groups")
-        .insert(
-            {
-                "name": name.strip(),
-                "description": description.strip(),
-                "deadline": deadline.isoformat(),
-                "tags": tags,
-            }
+    try:
+        tags = generate_tags(description)
+
+        db = get_supabase()
+        result = (
+            db.table("groups")
+            .insert(
+                {
+                    "name": name.strip(),
+                    "description": description.strip(),
+                    "deadline": deadline.isoformat(),
+                    "tags": tags,
+                }
+            )
+            .execute()
         )
-        .execute()
-    )
+    except Exception as exc:  # AI/network failures shouldn't crash the app
+        return "", f"Could not create the group: {exc}", []
+
     group_id = result.data[0]["id"]
     status = f"Group '{name}' created. Share this Group ID with your teammates: {group_id}"
     return group_id, status, tags
@@ -157,20 +175,30 @@ def add_member(group_id: str, member_name: str):
     if not group_id.strip() or not member_name.strip():
         return "Please provide a Group ID and a member name."
 
-    db = get_supabase()
-    group = db.table("groups").select("id").eq("id", group_id.strip()).execute()
-    if not group.data:
-        return f"No group found with ID {group_id}."
+    try:
+        db = get_supabase()
+        group = db.table("groups").select("id").eq("id", group_id.strip()).execute()
+        if not group.data:
+            return f"No group found with ID {group_id}."
 
-    db.table("members").insert(
-        {"group_id": group_id.strip(), "name": member_name.strip()}
-    ).execute()
+        db.table("members").insert(
+            {"group_id": group_id.strip(), "name": member_name.strip()}
+        ).execute()
+    except Exception as exc:
+        return f"Could not add member: {exc}"
     return f"Added '{member_name}' to the group."
 
 
 def load_group_tags(group_id: str):
-    db = get_supabase()
-    group = db.table("groups").select("tags").eq("id", group_id.strip()).execute()
+    if not group_id.strip():
+        return gr.CheckboxGroup(choices=[]), "Please provide a Group ID."
+
+    try:
+        db = get_supabase()
+        group = db.table("groups").select("tags").eq("id", group_id.strip()).execute()
+    except Exception as exc:
+        return gr.CheckboxGroup(choices=[]), f"Could not load tags: {exc}"
+
     if not group.data:
         return gr.CheckboxGroup(choices=[]), "No group found with that ID."
     tags = group.data[0]["tags"]
@@ -181,29 +209,32 @@ def submit_strong_suits(group_id: str, member_name: str, selected_tags: list[str
     if not group_id.strip() or not member_name.strip():
         return "Please provide a Group ID and your member name."
 
-    db = get_supabase()
-    member = (
-        db.table("members")
-        .select("id")
-        .eq("group_id", group_id.strip())
-        .ilike("name", member_name.strip())
-        .execute()
-    )
-    if not member.data:
-        return f"No member named '{member_name}' found in that group."
+    try:
+        db = get_supabase()
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id.strip())
+            .ilike("name", member_name.strip())
+            .execute()
+        )
+        if not member.data:
+            return f"No member named '{member_name}' found in that group."
 
-    db.table("members").update(
-        {"strong_suits": selected_tags, "submitted": True}
-    ).eq("id", member.data[0]["id"]).execute()
+        db.table("members").update(
+            {"strong_suits": selected_tags, "submitted": True}
+        ).eq("id", member.data[0]["id"]).execute()
 
-    status = f"Saved strong suits for {member_name}."
+        status = f"Saved strong suits for {member_name}."
 
-    all_members = (
-        db.table("members").select("submitted").eq("group_id", group_id.strip()).execute()
-    )
-    if all_members.data and all(m["submitted"] for m in all_members.data):
-        distribution_status = distribute_tasks(group_id.strip())
-        status += f" Everyone has submitted — {distribution_status}"
+        all_members = (
+            db.table("members").select("submitted").eq("group_id", group_id.strip()).execute()
+        )
+        if all_members.data and all(m["submitted"] for m in all_members.data):
+            distribution_status = distribute_tasks(group_id.strip())
+            status += f" Everyone has submitted — {distribution_status}"
+    except Exception as exc:
+        return f"Could not save strong suits: {exc}"
 
     return status
 
@@ -213,6 +244,13 @@ def submit_strong_suits(group_id: str, member_name: str, selected_tags: list[str
 # ---------------------------------------------------------------------------
 
 def distribute_tasks(group_id: str) -> str:
+    try:
+        return _distribute_tasks(group_id)
+    except Exception as exc:
+        return f"Could not distribute tasks: {exc}"
+
+
+def _distribute_tasks(group_id: str) -> str:
     db = get_supabase()
 
     existing = db.table("tasks").select("id").eq("group_id", group_id).execute()
@@ -269,6 +307,13 @@ def get_dashboard(group_id: str):
     if not group_id.strip():
         return "Please provide a Group ID.", None, "—"
 
+    try:
+        return _get_dashboard(group_id)
+    except Exception as exc:
+        return f"Could not load dashboard: {exc}", None, "—"
+
+
+def _get_dashboard(group_id: str):
     db = get_supabase()
     group = db.table("groups").select("name, deadline").eq("id", group_id.strip()).execute()
     if not group.data:
@@ -320,6 +365,16 @@ def get_dashboard(group_id: str):
 
 
 def get_my_tasks(group_id: str, member_name: str):
+    if not group_id.strip() or not member_name.strip():
+        return gr.CheckboxGroup(choices=[], value=[]), "Please provide a Group ID and your name."
+
+    try:
+        return _get_my_tasks(group_id, member_name)
+    except Exception as exc:
+        return gr.CheckboxGroup(choices=[], value=[]), f"Could not load tasks: {exc}"
+
+
+def _get_my_tasks(group_id: str, member_name: str):
     db = get_supabase()
     member = (
         db.table("members")
@@ -352,13 +407,19 @@ def get_my_tasks(group_id: str, member_name: str):
 
 
 def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[str]):
-    db = get_supabase()
-    tasks = db.table("tasks").select("id").eq("group_id", group_id.strip()).execute().data
-    all_ids = {t["id"] for t in tasks}
-    completed_set = set(completed_task_ids)
+    if not group_id.strip():
+        return "Please provide a Group ID."
 
-    for task_id in all_ids:
-        db.table("tasks").update({"completed": task_id in completed_set}).eq("id", task_id).execute()
+    try:
+        db = get_supabase()
+        tasks = db.table("tasks").select("id").eq("group_id", group_id.strip()).execute().data
+        all_ids = {t["id"] for t in tasks}
+        completed_set = set(completed_task_ids)
+
+        for task_id in all_ids:
+            db.table("tasks").update({"completed": task_id in completed_set}).eq("id", task_id).execute()
+    except Exception as exc:
+        return f"Could not save task updates: {exc}"
 
     return "Saved. Refresh the Dashboard tab to see updated progress."
 
