@@ -425,6 +425,92 @@ def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[
 
 
 # ---------------------------------------------------------------------------
+# Files
+# ---------------------------------------------------------------------------
+
+FILES_BUCKET = "group-files"
+
+
+def upload_file(group_id: str, member_name: str, file_path: str | None, editable: bool):
+    if not group_id.strip() or not member_name.strip():
+        return "Please provide a Group ID and your name."
+    if not file_path:
+        return "Please choose a file to upload."
+
+    try:
+        db = get_supabase()
+        file_name = os.path.basename(file_path)
+        storage_path = f"{group_id.strip()}/{file_name}"
+
+        existing = (
+            db.table("files")
+            .select("id, uploader_name, editable")
+            .eq("group_id", group_id.strip())
+            .eq("file_name", file_name)
+            .execute()
+        )
+
+        if existing.data:
+            record = existing.data[0]
+            same_uploader = record["uploader_name"].strip().lower() == member_name.strip().lower()
+            if not record["editable"] and not same_uploader:
+                return (
+                    f"'{file_name}' was uploaded by {record['uploader_name']} and "
+                    "isn't marked editable by other members."
+                )
+            db.storage.from_(FILES_BUCKET).update(storage_path, file_path)
+            db.table("files").update(
+                {
+                    "uploader_name": member_name.strip(),
+                    "editable": bool(editable),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", record["id"]).execute()
+            return f"Replaced '{file_name}'."
+
+        db.storage.from_(FILES_BUCKET).upload(storage_path, file_path)
+        db.table("files").insert(
+            {
+                "group_id": group_id.strip(),
+                "uploader_name": member_name.strip(),
+                "file_name": file_name,
+                "storage_path": storage_path,
+                "editable": bool(editable),
+            }
+        ).execute()
+        return f"Uploaded '{file_name}'."
+    except Exception as exc:
+        return f"Could not upload file: {exc}"
+
+
+def list_files(group_id: str):
+    if not group_id.strip():
+        return "Please provide a Group ID."
+
+    try:
+        db = get_supabase()
+        rows = (
+            db.table("files")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .order("created_at")
+            .execute()
+            .data
+        )
+        if not rows:
+            return "No files uploaded yet."
+
+        lines = ["| File | Uploaded by | Editable by others | Link |", "|---|---|---|---|"]
+        for r in rows:
+            url = db.storage.from_(FILES_BUCKET).get_public_url(r["storage_path"])
+            editable = "Yes" if r["editable"] else "No"
+            lines.append(f"| {r['file_name']} | {r['uploader_name']} | {editable} | [Download]({url}) |")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Could not load files: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 
@@ -432,75 +518,75 @@ CREAM_THEME = gr.themes.Base(
     primary_hue=gr.themes.colors.stone,
     neutral_hue=gr.themes.colors.stone,
 ).set(
-    body_background_fill="#F6EEDD",
-    body_background_fill_dark="#F6EEDD",
-    background_fill_primary="#F6EEDD",
-    background_fill_primary_dark="#F6EEDD",
-    background_fill_secondary="#EAE0C7",
-    background_fill_secondary_dark="#EAE0C7",
-    block_background_fill="#FCF8EF",
-    block_background_fill_dark="#FCF8EF",
-    block_border_color="#DCCEA8",
-    block_border_color_dark="#DCCEA8",
-    block_label_background_fill="#EAE0C7",
-    block_label_background_fill_dark="#EAE0C7",
+    body_background_fill="#F2EFE9",
+    body_background_fill_dark="#F2EFE9",
+    background_fill_primary="#F2EFE9",
+    background_fill_primary_dark="#F2EFE9",
+    background_fill_secondary="#E6E1D6",
+    background_fill_secondary_dark="#E6E1D6",
+    block_background_fill="#FAFAF7",
+    block_background_fill_dark="#FAFAF7",
+    block_border_color="#D6D0C0",
+    block_border_color_dark="#D6D0C0",
+    block_label_background_fill="#E6E1D6",
+    block_label_background_fill_dark="#E6E1D6",
     block_label_text_color="#1A1A1A",
     block_label_text_color_dark="#1A1A1A",
     block_title_text_color="#1A1A1A",
     block_title_text_color_dark="#1A1A1A",
-    border_color_primary="#DCCEA8",
-    border_color_primary_dark="#DCCEA8",
+    border_color_primary="#D6D0C0",
+    border_color_primary_dark="#D6D0C0",
     body_text_color="#1A1A1A",
     body_text_color_dark="#1A1A1A",
-    body_text_color_subdued="#5C5342",
-    body_text_color_subdued_dark="#5C5342",
-    button_primary_background_fill="#DCCEA8",
-    button_primary_background_fill_hover="#CBB98A",
-    button_primary_background_fill_dark="#DCCEA8",
+    body_text_color_subdued="#57534A",
+    body_text_color_subdued_dark="#57534A",
+    button_primary_background_fill="#D6D0C0",
+    button_primary_background_fill_hover="#C4BDAA",
+    button_primary_background_fill_dark="#D6D0C0",
     button_primary_text_color="#1A1A1A",
     button_primary_text_color_dark="#1A1A1A",
-    button_secondary_background_fill="#EAE0C7",
-    button_secondary_background_fill_hover="#DCCEA8",
-    button_secondary_background_fill_dark="#EAE0C7",
+    button_secondary_background_fill="#E6E1D6",
+    button_secondary_background_fill_hover="#D6D0C0",
+    button_secondary_background_fill_dark="#E6E1D6",
     button_secondary_text_color="#1A1A1A",
     button_secondary_text_color_dark="#1A1A1A",
-    input_background_fill="#FCF8EF",
-    input_background_fill_dark="#FCF8EF",
-    input_border_color="#DCCEA8",
-    input_border_color_dark="#DCCEA8",
-    checkbox_background_color="#FCF8EF",
-    checkbox_background_color_dark="#FCF8EF",
-    checkbox_background_color_selected="#CBB98A",
-    checkbox_background_color_selected_dark="#CBB98A",
-    checkbox_border_color="#DCCEA8",
-    checkbox_border_color_dark="#DCCEA8",
-    checkbox_label_background_fill="#FCF8EF",
-    checkbox_label_background_fill_dark="#FCF8EF",
-    checkbox_label_background_fill_selected="#EAE0C7",
-    checkbox_label_background_fill_selected_dark="#EAE0C7",
+    input_background_fill="#FAFAF7",
+    input_background_fill_dark="#FAFAF7",
+    input_border_color="#D6D0C0",
+    input_border_color_dark="#D6D0C0",
+    checkbox_background_color="#FAFAF7",
+    checkbox_background_color_dark="#FAFAF7",
+    checkbox_background_color_selected="#C4BDAA",
+    checkbox_background_color_selected_dark="#C4BDAA",
+    checkbox_border_color="#D6D0C0",
+    checkbox_border_color_dark="#D6D0C0",
+    checkbox_label_background_fill="#FAFAF7",
+    checkbox_label_background_fill_dark="#FAFAF7",
+    checkbox_label_background_fill_selected="#E6E1D6",
+    checkbox_label_background_fill_selected_dark="#E6E1D6",
     checkbox_label_text_color="#1A1A1A",
     checkbox_label_text_color_dark="#1A1A1A",
     checkbox_label_text_color_selected="#1A1A1A",
     checkbox_label_text_color_selected_dark="#1A1A1A",
-    slider_color="#CBB98A",
-    slider_color_dark="#CBB98A",
-    table_even_background_fill="#FCF8EF",
-    table_even_background_fill_dark="#FCF8EF",
-    table_odd_background_fill="#EAE0C7",
-    table_odd_background_fill_dark="#EAE0C7",
-    table_border_color="#DCCEA8",
-    table_border_color_dark="#DCCEA8",
-    table_row_focus="#DCCEA8",
-    table_row_focus_dark="#DCCEA8",
-    color_accent="#CBB98A",
-    color_accent_soft="#EAE0C7",
-    color_accent_soft_dark="#EAE0C7",
-    border_color_accent="#DCCEA8",
-    border_color_accent_dark="#DCCEA8",
+    slider_color="#C4BDAA",
+    slider_color_dark="#C4BDAA",
+    table_even_background_fill="#FAFAF7",
+    table_even_background_fill_dark="#FAFAF7",
+    table_odd_background_fill="#E6E1D6",
+    table_odd_background_fill_dark="#E6E1D6",
+    table_border_color="#D6D0C0",
+    table_border_color_dark="#D6D0C0",
+    table_row_focus="#D6D0C0",
+    table_row_focus_dark="#D6D0C0",
+    color_accent="#C4BDAA",
+    color_accent_soft="#E6E1D6",
+    color_accent_soft_dark="#E6E1D6",
+    border_color_accent="#D6D0C0",
+    border_color_accent_dark="#D6D0C0",
     link_text_color="#1A1A1A",
     link_text_color_dark="#1A1A1A",
-    link_text_color_hover="#5C5342",
-    link_text_color_hover_dark="#5C5342",
+    link_text_color_hover="#57534A",
+    link_text_color_hover_dark="#57534A",
     block_radius="18px",
     block_label_radius="10px",
     block_label_right_radius="10px",
@@ -629,7 +715,25 @@ with gr.Blocks(title="GroupMate") as demo:
         mt_status = gr.Markdown()
         mt_tasks = gr.CheckboxGroup(choices=[], label="Check off completed tasks")
         mt_save = gr.Button("Save Task Updates", variant="primary")
-        mt_back = gr.Button("← Back to Dashboard", variant="secondary")
+        with gr.Row(elem_classes="step-nav-row"):
+            mt_back = gr.Button("← Back to Dashboard", variant="secondary")
+            mt_next = gr.Button("Continue to Files →", variant="primary")
+
+    # --- Step 6: Files ------------------------------------------------
+    with gr.Column(visible=False) as step_files:
+        gr.Markdown("## Files")
+        gr.Markdown(
+            "Upload your work so the group can find it in one place. Mark a "
+            "file editable if teammates should be able to replace it with a "
+            "newer version; otherwise only you can update it."
+        )
+        fl_file = gr.File(label="Choose a file to upload")
+        fl_editable = gr.Checkbox(label="Allow other members to replace this file", value=False)
+        fl_upload = gr.Button("Upload File", variant="primary")
+        fl_upload_status = gr.Markdown()
+        fl_refresh = gr.Button("Refresh File List")
+        fl_table = gr.Markdown()
+        fl_back = gr.Button("← Back to My Tasks", variant="secondary")
 
     # --- Wiring: step content ------------------------------------------------
     cg_button.click(
@@ -653,16 +757,24 @@ with gr.Blocks(title="GroupMate") as demo:
     mt_save.click(
         save_task_updates, inputs=[shared_group_id, shared_name, mt_tasks], outputs=mt_status
     )
+    fl_upload.click(
+        upload_file,
+        inputs=[shared_group_id, shared_name, fl_file, fl_editable],
+        outputs=fl_upload_status,
+    )
+    fl_refresh.click(list_files, inputs=shared_group_id, outputs=fl_table)
 
     # --- Wiring: step navigation ------------------------------------------------
     cg_skip.click(_advance, outputs=[step_create, step_members])
     am_next.click(_advance, outputs=[step_members, step_suits])
     ss_next.click(_advance, outputs=[step_suits, step_dashboard])
     db_next.click(_advance, outputs=[step_dashboard, step_tasks])
+    mt_next.click(_advance, outputs=[step_tasks, step_files])
     am_back.click(_advance, outputs=[step_members, step_create])
     ss_back.click(_advance, outputs=[step_suits, step_members])
     db_back.click(_advance, outputs=[step_dashboard, step_suits])
     mt_back.click(_advance, outputs=[step_tasks, step_dashboard])
+    fl_back.click(_advance, outputs=[step_files, step_tasks])
 
 
 if __name__ == "__main__":
