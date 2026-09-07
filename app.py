@@ -428,7 +428,37 @@ def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[
 # UI
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(title="GroupMate") as demo:
+CREAM_THEME = gr.themes.Soft(
+    primary_hue=gr.themes.colors.emerald,
+    neutral_hue=gr.themes.colors.stone,
+).set(
+    body_background_fill="#FBF4E4",
+    body_background_fill_dark="#FBF4E4",
+    background_fill_primary="#FBF4E4",
+    background_fill_primary_dark="#FBF4E4",
+    background_fill_secondary="#F3E9D2",
+    background_fill_secondary_dark="#F3E9D2",
+    block_background_fill="#FFFDF7",
+    block_background_fill_dark="#FFFDF7",
+    block_border_color="#E1D3B0",
+    block_border_color_dark="#E1D3B0",
+    border_color_primary="#E1D3B0",
+    border_color_primary_dark="#E1D3B0",
+    body_text_color="#3B3327",
+    body_text_color_dark="#3B3327",
+    body_text_color_subdued="#7A6F5C",
+    body_text_color_subdued_dark="#7A6F5C",
+    button_primary_background_fill="#4B7A56",
+    button_primary_background_fill_hover="#3D6446",
+    button_primary_background_fill_dark="#4B7A56",
+    button_primary_text_color="#FFFFFF",
+    input_background_fill="#FFFDF7",
+    input_background_fill_dark="#FFFDF7",
+    input_border_color="#E1D3B0",
+    input_border_color_dark="#E1D3B0",
+)
+
+with gr.Blocks(title="GroupMate", theme=CREAM_THEME) as demo:
     gr.Markdown("# GroupMate\nFair, AI-powered task distribution for group projects.")
 
     with gr.Tab("1. Create Group"):
