@@ -305,19 +305,19 @@ def _distribute_tasks(group_id: str) -> str:
 
 def get_dashboard(group_id: str):
     if not group_id.strip():
-        return "Please provide a Group ID.", None, "—"
+        return "Please provide a Group ID.", None, "—", ""
 
     try:
         return _get_dashboard(group_id)
     except Exception as exc:
-        return f"Could not load dashboard: {exc}", None, "—"
+        return f"Could not load dashboard: {exc}", None, "—", ""
 
 
 def _get_dashboard(group_id: str):
     db = get_supabase()
     group = db.table("groups").select("name, deadline").eq("id", group_id.strip()).execute()
     if not group.data:
-        return "No group found with that ID.", None, "—"
+        return "No group found with that ID.", None, "—", ""
 
     deadline = date_parser.parse(group.data[0]["deadline"])
     now = datetime.now(timezone.utc)
@@ -331,7 +331,7 @@ def _get_dashboard(group_id: str):
     tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
 
     if not tasks:
-        return "No tasks yet — waiting on task distribution.", None, countdown
+        return "No tasks yet — waiting on task distribution.", None, countdown, ""
 
     created_at = date_parser.parse(
         db.table("groups").select("created_at").eq("id", group_id.strip()).execute().data[0]["created_at"]
@@ -344,6 +344,7 @@ def _get_dashboard(group_id: str):
     rows = []
     total_tasks = 0
     total_done = 0
+    behind_members = []
     for member in members:
         member_tasks = [
             t
@@ -355,55 +356,19 @@ def _get_dashboard(group_id: str):
         total_tasks += count
         total_done += done
         completion_fraction = (done / count) if count else 1.0
-        behind = "Yes" if (elapsed_fraction - completion_fraction) > FALLING_BEHIND_THRESHOLD else "No"
+        is_behind = (elapsed_fraction - completion_fraction) > FALLING_BEHIND_THRESHOLD
+        if is_behind:
+            behind_members.append(member["name"])
         rows.append(
-            [member["name"], f"{done}/{count}", f"{round(completion_fraction * 100)}%", behind]
+            [member["name"], f"{done}/{count}", f"{round(completion_fraction * 100)}%", "Yes" if is_behind else "No"]
         )
 
     group_progress = f"{round((total_done / total_tasks) * 100) if total_tasks else 0}% of tasks complete"
-    return group_progress, rows, countdown
-
-
-def get_my_tasks(group_id: str, member_name: str):
-    if not group_id.strip() or not member_name.strip():
-        return gr.CheckboxGroup(choices=[], value=[]), "Please provide a Group ID and your name."
-
-    try:
-        return _get_my_tasks(group_id, member_name)
-    except Exception as exc:
-        return gr.CheckboxGroup(choices=[], value=[]), f"Could not load tasks: {exc}"
-
-
-def _get_my_tasks(group_id: str, member_name: str):
-    db = get_supabase()
-    member = (
-        db.table("members")
-        .select("id")
-        .eq("group_id", group_id.strip())
-        .ilike("name", member_name.strip())
-        .execute()
+    nudge = "\n\n".join(
+        f"🚩 **{name}** may need a hand — visit **Offer Help** to reach out."
+        for name in behind_members
     )
-    if not member.data:
-        return gr.CheckboxGroup(choices=[], value=[]), "No member found with that name in that group."
-
-    member_id = member.data[0]["id"]
-    tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
-    my_tasks = [
-        t for t in tasks if t["assigned_to"] == member_id or member_id in (t["shared_with"] or [])
-    ]
-
-    if not my_tasks:
-        return gr.CheckboxGroup(choices=[], value=[]), "No tasks assigned yet."
-
-    choices = []
-    completed = []
-    for t in my_tasks:
-        label = f"{t['title']} (~{t['estimated_hours']}h)" + (" [shared]" if t["shared"] else "")
-        choices.append((label, t["id"]))
-        if t["completed"]:
-            completed.append(t["id"])
-
-    return gr.CheckboxGroup(choices=choices, value=completed), f"Loaded {len(my_tasks)} tasks."
+    return group_progress, rows, countdown, nudge
 
 
 def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[str]):
@@ -511,6 +476,289 @@ def list_files(group_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Progress rings
+# ---------------------------------------------------------------------------
+
+def _ring_svg(percent: float, label: str, size: int = 100) -> str:
+    percent = max(0, min(100, round(percent)))
+    radius = size / 2 - 9
+    circumference = 2 * 3.14159265 * radius
+    offset = circumference * (1 - percent / 100)
+    return f"""
+    <div style="text-align:center;">
+      <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+        <circle cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke="#E6E1D6" stroke-width="9"/>
+        <circle cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke="#8B6F47" stroke-width="9"
+                stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
+                stroke-linecap="round" transform="rotate(-90 {size / 2} {size / 2})"/>
+        <text x="50%" y="50%" text-anchor="middle" dy="0.35em" font-size="{size * 0.2}"
+              fill="#1A1A1A" font-family="sans-serif" font-weight="600">{percent}%</text>
+      </svg>
+      <div style="font-size:0.85rem;color:#57534A;margin-top:2px;">{label}</div>
+    </div>
+    """
+
+
+# ---------------------------------------------------------------------------
+# Home (personal progress + tasks)
+# ---------------------------------------------------------------------------
+
+def get_home_view(group_id: str, member_name: str):
+    empty_progress = _ring_svg(0, "My Progress")
+    empty_countdown = _ring_svg(0, "Time Left")
+    empty_tasks = gr.CheckboxGroup(choices=[], value=[])
+
+    if not group_id.strip() or not member_name.strip():
+        return empty_progress, empty_countdown, empty_tasks, "Please provide a Group ID and your name."
+
+    try:
+        db = get_supabase()
+        group = db.table("groups").select("deadline, created_at").eq("id", group_id.strip()).execute()
+        if not group.data:
+            return empty_progress, empty_countdown, empty_tasks, "No group found with that ID."
+
+        deadline = date_parser.parse(group.data[0]["deadline"])
+        created_at = date_parser.parse(group.data[0]["created_at"])
+        now = datetime.now(timezone.utc)
+        total_span = (deadline - created_at).total_seconds()
+        elapsed_pct = (
+            min(max((now - created_at).total_seconds() / total_span, 0), 1) * 100 if total_span > 0 else 100
+        )
+        remaining = deadline - now
+        countdown_label = (
+            f"{remaining.days}d {remaining.seconds // 3600}h left"
+            if remaining.total_seconds() > 0
+            else "Deadline passed"
+        )
+        countdown_ring = _ring_svg(100 - elapsed_pct, countdown_label)
+
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id.strip())
+            .ilike("name", member_name.strip())
+            .execute()
+        )
+        if not member.data:
+            return empty_progress, countdown_ring, empty_tasks, "No member found with that name in that group."
+
+        member_id = member.data[0]["id"]
+        tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
+        my_tasks = [
+            t for t in tasks if t["assigned_to"] == member_id or member_id in (t["shared_with"] or [])
+        ]
+        done = sum(1 for t in my_tasks if t["completed"])
+        count = len(my_tasks)
+        progress_ring = _ring_svg((done / count * 100) if count else 0, "My Progress")
+
+        choices, completed = [], []
+        for t in my_tasks:
+            label = f"{t['title']} (~{t['estimated_hours']}h)" + (" [shared]" if t["shared"] else "")
+            choices.append((label, t["id"]))
+            if t["completed"]:
+                completed.append(t["id"])
+
+        status = f"{done}/{count} tasks done." if count else "No tasks assigned yet."
+        return progress_ring, countdown_ring, gr.CheckboxGroup(choices=choices, value=completed), status
+    except Exception as exc:
+        return empty_progress, empty_countdown, empty_tasks, f"Could not load: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Messaging (group chat + private chats)
+# ---------------------------------------------------------------------------
+
+def send_group_message(group_id: str, sender_name: str, body: str):
+    if not group_id.strip() or not sender_name.strip() or not body.strip():
+        return "", "Please provide a Group ID, your name, and a message."
+    try:
+        db = get_supabase()
+        db.table("messages").insert(
+            {"group_id": group_id.strip(), "sender_name": sender_name.strip(), "body": body.strip()}
+        ).execute()
+    except Exception as exc:
+        return body, f"Could not send message: {exc}"
+    return "", ""
+
+
+def get_group_chat(group_id: str):
+    if not group_id.strip():
+        return "Please provide a Group ID."
+    try:
+        db = get_supabase()
+        rows = (
+            db.table("messages")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .is_("recipient_name", "null")
+            .order("created_at")
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        return f"Could not load chat: {exc}"
+    if not rows:
+        return "_No messages yet — say hi!_"
+    return "\n\n".join(f"**{r['sender_name']}:** {r['body']}" for r in rows)
+
+
+def send_private_message(group_id: str, sender_name: str, recipient_name: str, body: str):
+    if not group_id.strip() or not sender_name.strip() or not recipient_name.strip() or not body.strip():
+        return "", "Please provide your name, a teammate to message, and a message."
+    try:
+        db = get_supabase()
+        db.table("messages").insert(
+            {
+                "group_id": group_id.strip(),
+                "sender_name": sender_name.strip(),
+                "recipient_name": recipient_name.strip(),
+                "body": body.strip(),
+            }
+        ).execute()
+    except Exception as exc:
+        return body, f"Could not send message: {exc}"
+    return "", ""
+
+
+def get_private_chat(group_id: str, member_a: str, member_b: str):
+    if not group_id.strip() or not member_a.strip() or not member_b.strip():
+        return "Please provide a Group ID, your name, and a teammate to chat with."
+    try:
+        db = get_supabase()
+        rows = (
+            db.table("messages")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .eq("recipient_name", member_b.strip())
+            .execute()
+            .data
+        )
+        rows += (
+            db.table("messages")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .eq("recipient_name", member_a.strip())
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        return f"Could not load chat: {exc}"
+
+    names = {member_a.strip().lower(), member_b.strip().lower()}
+    thread = sorted(
+        (r for r in rows if r["sender_name"].strip().lower() in names),
+        key=lambda r: r["created_at"],
+    )
+    if not thread:
+        return f"_No messages with {member_b} yet._"
+    return "\n\n".join(f"**{r['sender_name']}:** {r['body']}" for r in thread)
+
+
+# ---------------------------------------------------------------------------
+# Help requests
+# ---------------------------------------------------------------------------
+
+def request_help(group_id: str, member_name: str, note: str):
+    if not group_id.strip() or not member_name.strip() or not note.strip():
+        return "Please provide a Group ID, your name, and a note about what you need help with."
+    try:
+        db = get_supabase()
+        db.table("help_requests").insert(
+            {"group_id": group_id.strip(), "requester_name": member_name.strip(), "note": note.strip()}
+        ).execute()
+    except Exception as exc:
+        return f"Could not send help request: {exc}"
+    return "Help request sent — it'll show up under Offer Help for your teammates."
+
+
+def list_open_help_requests(group_id: str):
+    if not group_id.strip():
+        return "Please provide a Group ID."
+    try:
+        db = get_supabase()
+        rows = (
+            db.table("help_requests")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .eq("status", "open")
+            .order("created_at")
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        return f"Could not load help requests: {exc}"
+    if not rows:
+        return "_No open help requests right now._"
+    lines = ["| Requester | Note |", "|---|---|"]
+    lines += [f"| {r['requester_name']} | {r['note']} |" for r in rows]
+    return "\n".join(lines)
+
+
+def offer_help(group_id: str, requester_name: str, helper_name: str):
+    if not group_id.strip() or not requester_name.strip() or not helper_name.strip():
+        return "Please provide the requester's name and your own name."
+    try:
+        db = get_supabase()
+        open_request = (
+            db.table("help_requests")
+            .select("id")
+            .eq("group_id", group_id.strip())
+            .eq("status", "open")
+            .ilike("requester_name", requester_name.strip())
+            .order("created_at")
+            .execute()
+        )
+        if not open_request.data:
+            return f"No open help request found from '{requester_name}'."
+        db.table("help_requests").update(
+            {
+                "status": "resolved",
+                "helper_name": helper_name.strip(),
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", open_request.data[0]["id"]).execute()
+    except Exception as exc:
+        return f"Could not update help request: {exc}"
+    return f"Marked {requester_name}'s request as helped by {helper_name}. Thank you!"
+
+
+# ---------------------------------------------------------------------------
+# Ask AI assistant
+# ---------------------------------------------------------------------------
+
+def ask_ai(group_id: str, member_name: str, question: str):
+    if not question.strip():
+        return "Ask a question first."
+    try:
+        context = ""
+        if group_id.strip():
+            db = get_supabase()
+            group = db.table("groups").select("name, description").eq("id", group_id.strip()).execute()
+            if group.data:
+                context = (
+                    f" The user's project is '{group.data[0]['name']}': {group.data[0]['description']}"
+                )
+        response = get_openai().chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are the in-app assistant for GroupMate, a tool that helps "
+                        "student groups split project work fairly. Give short, practical "
+                        "advice about task help, staying on schedule, or resolving "
+                        "teammate friction. Keep answers to a few sentences." + context
+                    ),
+                },
+                {"role": "user", "content": question.strip()},
+            ],
+        )
+        return response.choices[0].message.content
+    except Exception as exc:
+        return f"Could not reach the AI assistant: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 
@@ -612,7 +860,7 @@ CREAM_THEME = gr.themes.Base(
 
 RESPONSIVE_CSS = """
 .gradio-container {
-    max-width: 760px !important;
+    max-width: 980px !important;
     margin: 0 auto !important;
 }
 @media (max-width: 640px) {
@@ -622,6 +870,13 @@ RESPONSIVE_CSS = """
 }
 .step-nav-row {
     flex-wrap: wrap !important;
+}
+.sidebar-col {
+    gap: 6px !important;
+}
+.sidebar-col button {
+    text-align: left !important;
+    justify-content: flex-start !important;
 }
 """
 
@@ -692,48 +947,114 @@ with gr.Blocks(title="GroupMate") as demo:
             ss_back = gr.Button("← Back", variant="secondary")
             ss_next = gr.Button("Continue to Dashboard →", variant="primary")
 
-    # --- Step 4: Dashboard ------------------------------------------------
-    with gr.Column(visible=False) as step_dashboard:
-        gr.Markdown("## Dashboard")
-        gr.Markdown("See group and per-member progress, and who's falling behind.")
-        db_refresh = gr.Button("Refresh Dashboard", variant="primary")
-        db_countdown = gr.Markdown()
-        db_progress = gr.Markdown()
-        db_table = gr.Dataframe(
-            headers=["Member", "Tasks Done", "Completion %", "Falling Behind?"],
-            label="Per-member progress",
-        )
-        with gr.Row(elem_classes="step-nav-row"):
-            db_back = gr.Button("← Back", variant="secondary")
-            db_next = gr.Button("Continue to My Tasks →", variant="primary")
+    # --- Step 4: Main Dashboard Shell ------------------------------------------------
+    with gr.Column(visible=False) as step_shell:
+        with gr.Row():
+            with gr.Column(scale=1, min_width=170, elem_classes="sidebar-col"):
+                nav_home = gr.Button("🏠 Home", variant="secondary")
+                nav_progress = gr.Button("📊 Group Progress", variant="secondary")
+                nav_chat = gr.Button("💬 Group Chat", variant="secondary")
+                nav_files = gr.Button("📁 File Upload", variant="secondary")
+                nav_request_help = gr.Button("🆘 Request Help", variant="secondary")
+                nav_offer_help = gr.Button("🤝 Offer Help", variant="secondary")
+                nav_settings = gr.Button("⚙️ Settings", variant="secondary")
 
-    # --- Step 5: My Tasks ------------------------------------------------
-    with gr.Column(visible=False) as step_tasks:
-        gr.Markdown("## My Tasks")
-        gr.Markdown("Load your assigned tasks and check them off as you complete them.")
-        mt_load = gr.Button("Load My Tasks")
-        mt_status = gr.Markdown()
-        mt_tasks = gr.CheckboxGroup(choices=[], label="Check off completed tasks")
-        mt_save = gr.Button("Save Task Updates", variant="primary")
-        with gr.Row(elem_classes="step-nav-row"):
-            mt_back = gr.Button("← Back to Dashboard", variant="secondary")
-            mt_next = gr.Button("Continue to Files →", variant="primary")
+            with gr.Column(scale=4):
+                # --- Page: Home ---
+                with gr.Column(visible=True) as page_home:
+                    gr.Markdown("## Home")
+                    home_refresh = gr.Button("Refresh", variant="primary")
+                    with gr.Row():
+                        home_progress_ring = gr.HTML()
+                        home_countdown_ring = gr.HTML()
+                    home_status = gr.Markdown()
+                    home_tasks = gr.CheckboxGroup(choices=[], label="My tasks")
+                    home_save = gr.Button("Save Task Updates", variant="primary")
+                    gr.Markdown("### Private Chat")
+                    home_dm_to = gr.Textbox(label="Message a teammate", placeholder="Teammate's name")
+                    home_dm_thread = gr.Markdown()
+                    home_dm_load = gr.Button("Load Chat")
+                    home_dm_input = gr.Textbox(label="Message", placeholder="Type a message...")
+                    home_dm_send = gr.Button("Send", variant="primary")
 
-    # --- Step 6: Files ------------------------------------------------
-    with gr.Column(visible=False) as step_files:
-        gr.Markdown("## Files")
-        gr.Markdown(
-            "Upload your work so the group can find it in one place. Mark a "
-            "file editable if teammates should be able to replace it with a "
-            "newer version; otherwise only you can update it."
-        )
-        fl_file = gr.File(label="Choose a file to upload")
-        fl_editable = gr.Checkbox(label="Allow other members to replace this file", value=False)
-        fl_upload = gr.Button("Upload File", variant="primary")
-        fl_upload_status = gr.Markdown()
-        fl_refresh = gr.Button("Refresh File List")
-        fl_table = gr.Markdown()
-        fl_back = gr.Button("← Back to My Tasks", variant="secondary")
+                # --- Page: Group Progress ---
+                with gr.Column(visible=False) as page_progress:
+                    gr.Markdown("## Group Progress")
+                    gp_refresh = gr.Button("Refresh", variant="primary")
+                    gp_countdown = gr.Markdown()
+                    gp_progress = gr.Markdown()
+                    gp_table = gr.Dataframe(
+                        headers=["Member", "Tasks Done", "Completion %", "Falling Behind?"],
+                        label="Per-member progress",
+                    )
+                    gp_nudge = gr.Markdown()
+
+                # --- Page: Group Chat ---
+                with gr.Column(visible=False) as page_chat:
+                    gr.Markdown("## Group Chat")
+                    gc_refresh = gr.Button("Refresh Chat", variant="primary")
+                    gc_feed = gr.Markdown()
+                    gc_input = gr.Textbox(label="Message", placeholder="Type a message to the group...")
+                    gc_send = gr.Button("Send", variant="primary")
+
+                # --- Page: File Upload ---
+                with gr.Column(visible=False) as page_files:
+                    gr.Markdown("## File Upload")
+                    gr.Markdown(
+                        "Upload your work so the group can find it in one place. Mark a "
+                        "file editable if teammates should be able to replace it with a "
+                        "newer version; otherwise only you can update it."
+                    )
+                    fl_file = gr.File(label="Choose a file to upload")
+                    fl_editable = gr.Checkbox(label="Allow other members to replace this file", value=False)
+                    fl_upload = gr.Button("Upload File", variant="primary")
+                    fl_upload_status = gr.Markdown()
+                    fl_refresh = gr.Button("Refresh File List")
+                    fl_table = gr.Markdown()
+
+                # --- Page: Request Help ---
+                with gr.Column(visible=False) as page_request_help:
+                    gr.Markdown("## Request Help")
+                    gr.Markdown("Let your teammates know you're stuck and could use a hand.")
+                    rh_note = gr.Textbox(label="What do you need help with?", lines=3)
+                    rh_submit = gr.Button("Send Request", variant="primary")
+                    rh_status = gr.Markdown()
+
+                # --- Page: Offer Help ---
+                with gr.Column(visible=False) as page_offer_help:
+                    gr.Markdown("## Offer Help")
+                    gr.Markdown("See who's asked for help and let them know you've got it.")
+                    oh_refresh = gr.Button("Refresh Requests", variant="primary")
+                    oh_table = gr.Markdown()
+                    oh_requester = gr.Textbox(label="Requester's Name")
+                    oh_resolve = gr.Button("Mark as Helped", variant="primary")
+                    oh_status = gr.Markdown()
+
+                # --- Page: Settings ---
+                with gr.Column(visible=False) as page_settings:
+                    gr.Markdown("## Settings")
+                    gr.Markdown(
+                        "Your Group ID and Name are shown at the top of the page and "
+                        "apply across every section here."
+                    )
+                    settings_restart = gr.Button("🔄 Start Over / Join a Different Group", variant="secondary")
+
+        gr.Markdown("---")
+        with gr.Accordion("💡 Ask AI", open=False):
+            ai_question = gr.Textbox(
+                label="Ask the assistant",
+                placeholder="e.g. How do I help a teammate who's falling behind?",
+            )
+            ai_ask = gr.Button("Ask", variant="primary")
+            ai_answer = gr.Markdown()
+
+    PAGES = [page_home, page_progress, page_chat, page_files, page_request_help, page_offer_help, page_settings]
+
+    def _nav_to(target_index: int):
+        def _fn():
+            return [gr.update(visible=(i == target_index)) for i in range(len(PAGES))]
+
+        return _fn
 
     # --- Wiring: step content ------------------------------------------------
     cg_button.click(
@@ -748,33 +1069,57 @@ with gr.Blocks(title="GroupMate") as demo:
     ss_submit.click(
         submit_strong_suits, inputs=[shared_group_id, shared_name, ss_tags], outputs=ss_status
     )
-    db_refresh.click(
-        get_dashboard, inputs=shared_group_id, outputs=[db_progress, db_table, db_countdown]
+    home_refresh.click(
+        get_home_view,
+        inputs=[shared_group_id, shared_name],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_status],
     )
-    mt_load.click(
-        get_my_tasks, inputs=[shared_group_id, shared_name], outputs=[mt_tasks, mt_status]
+    home_save.click(
+        save_task_updates, inputs=[shared_group_id, shared_name, home_tasks], outputs=home_status
     )
-    mt_save.click(
-        save_task_updates, inputs=[shared_group_id, shared_name, mt_tasks], outputs=mt_status
+    home_dm_load.click(
+        get_private_chat, inputs=[shared_group_id, shared_name, home_dm_to], outputs=home_dm_thread
     )
+    home_dm_send.click(
+        send_private_message,
+        inputs=[shared_group_id, shared_name, home_dm_to, home_dm_input],
+        outputs=[home_dm_input, home_status],
+    ).then(get_private_chat, inputs=[shared_group_id, shared_name, home_dm_to], outputs=home_dm_thread)
+    gp_refresh.click(
+        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_table, gp_countdown, gp_nudge]
+    )
+    gc_refresh.click(get_group_chat, inputs=shared_group_id, outputs=gc_feed)
+    gc_send.click(
+        send_group_message, inputs=[shared_group_id, shared_name, gc_input], outputs=[gc_input, gc_feed]
+    ).then(get_group_chat, inputs=shared_group_id, outputs=gc_feed)
     fl_upload.click(
         upload_file,
         inputs=[shared_group_id, shared_name, fl_file, fl_editable],
         outputs=fl_upload_status,
     )
     fl_refresh.click(list_files, inputs=shared_group_id, outputs=fl_table)
+    rh_submit.click(request_help, inputs=[shared_group_id, shared_name, rh_note], outputs=rh_status)
+    oh_refresh.click(list_open_help_requests, inputs=shared_group_id, outputs=oh_table)
+    oh_resolve.click(
+        offer_help, inputs=[shared_group_id, oh_requester, shared_name], outputs=oh_status
+    )
+    ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, ai_question], outputs=ai_answer)
 
     # --- Wiring: step navigation ------------------------------------------------
     cg_skip.click(_advance, outputs=[step_create, step_members])
     am_next.click(_advance, outputs=[step_members, step_suits])
-    ss_next.click(_advance, outputs=[step_suits, step_dashboard])
-    db_next.click(_advance, outputs=[step_dashboard, step_tasks])
-    mt_next.click(_advance, outputs=[step_tasks, step_files])
+    ss_next.click(_advance, outputs=[step_suits, step_shell])
     am_back.click(_advance, outputs=[step_members, step_create])
     ss_back.click(_advance, outputs=[step_suits, step_members])
-    db_back.click(_advance, outputs=[step_dashboard, step_suits])
-    mt_back.click(_advance, outputs=[step_tasks, step_dashboard])
-    fl_back.click(_advance, outputs=[step_files, step_tasks])
+    settings_restart.click(_advance, outputs=[step_shell, step_create])
+
+    nav_home.click(_nav_to(0), outputs=PAGES)
+    nav_progress.click(_nav_to(1), outputs=PAGES)
+    nav_chat.click(_nav_to(2), outputs=PAGES)
+    nav_files.click(_nav_to(3), outputs=PAGES)
+    nav_request_help.click(_nav_to(4), outputs=PAGES)
+    nav_offer_help.click(_nav_to(5), outputs=PAGES)
+    nav_settings.click(_nav_to(6), outputs=PAGES)
 
 
 if __name__ == "__main__":

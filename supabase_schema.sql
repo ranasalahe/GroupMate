@@ -45,10 +45,32 @@ create table if not exists files (
     unique (group_id, file_name)
 );
 
+create table if not exists messages (
+    id uuid primary key default gen_random_uuid(),
+    group_id uuid not null references groups(id) on delete cascade,
+    sender_name text not null,
+    recipient_name text,
+    body text not null,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists help_requests (
+    id uuid primary key default gen_random_uuid(),
+    group_id uuid not null references groups(id) on delete cascade,
+    requester_name text not null,
+    note text not null,
+    status text not null default 'open',
+    helper_name text,
+    created_at timestamptz not null default now(),
+    resolved_at timestamptz
+);
+
 create index if not exists idx_members_group_id on members(group_id);
 create index if not exists idx_tasks_group_id on tasks(group_id);
 create index if not exists idx_tasks_assigned_to on tasks(assigned_to);
 create index if not exists idx_files_group_id on files(group_id);
+create index if not exists idx_messages_group_id on messages(group_id);
+create index if not exists idx_help_requests_group_id on help_requests(group_id);
 
 -- Demo-stage RLS: open policies so the Gradio app (using the anon/service key)
 -- can read and write freely. Tighten before any real deployment beyond the
@@ -57,11 +79,15 @@ alter table groups enable row level security;
 alter table members enable row level security;
 alter table tasks enable row level security;
 alter table files enable row level security;
+alter table messages enable row level security;
+alter table help_requests enable row level security;
 
 create policy "groups_all" on groups for all using (true) with check (true);
 create policy "members_all" on members for all using (true) with check (true);
 create policy "tasks_all" on tasks for all using (true) with check (true);
 create policy "files_all" on files for all using (true) with check (true);
+create policy "messages_all" on messages for all using (true) with check (true);
+create policy "help_requests_all" on help_requests for all using (true) with check (true);
 
 -- Storage bucket for uploaded work files. Public so download links work
 -- without extra signing logic; same open-access tradeoff as the table
