@@ -67,10 +67,10 @@ GroupMate does not use a fixed external dataset or corpus — inputs are provide
 | Provider | OpenAI |
 | Why considered | Required by the challenge; strong structured-output (JSON mode) support, which both AI calls depend on. |
 | Prompting approach | System + user message pattern, `response_format={"type": "json_object"}` to force valid JSON, with a manual retry (`_call_openai_json`, up to 2 retries) if a response fails to parse. |
-| Quality notes | Pending — `scripts/run_eval.py` against the 12-sample set in `docs/test-project-descriptions.md` is ready to run once real API keys are added to `.env`. |
-| Latency notes | Pending real-key testing. |
-| Cost notes | Low at demo scale — one tag-generation call and one distribution call per group. |
-| Decision | `gpt-4o` via OpenAI API, JSON mode, as required by the challenge. |
+| Quality notes | Live-tested on 2026-09-09 with a real key: `generate_tags()` returned 10 specific, relevant tags (e.g. "payment integration", "push notifications") for a bill-splitting app description on the first call, no retry needed. `ai_distribute_tasks()` split a 6-task project evenly across 2 members (3 tasks / ~30h each) with names matching exactly. Full `scripts/run_eval.py` (12-sample set) not yet run — see Day 4 testing notes below. |
+| Latency notes | Each `gpt-4o` call (tag generation, task distribution, and the Day 4 "Ask AI" assistant) returns in roughly 2-4 seconds in manual testing — acceptable for this app's turn-based (not real-time chat) usage pattern. |
+| Cost notes | Low at demo scale — one tag-generation call and one distribution call per group, plus occasional Ask AI calls; a few cents total across all manual testing so far. |
+| Decision | `gpt-4o` via OpenAI API, JSON mode for structured calls, plain text for the Day 4 assistant, as required by the challenge. |
 
 ### Prompt versions
 
@@ -79,14 +79,14 @@ GroupMate does not use a fixed external dataset or corpus — inputs are provide
 - System constraints: Respond ONLY in valid JSON `{"tags": [...]}`; tags specific to the project, not generic soft skills.
 - Few-shot examples: No — zero-shot with a tightly scoped system prompt.
 - Implementation: `generate_tags()` in [`app.py`](../app.py).
-- Notes / Results: Pending real-key test run.
+- Notes / Results: Live-tested — returned 10 specific tags on the first try, no malformed-JSON retries triggered.
 
 **P2 — Task Distribution**
 - Goal: Generate a task list from the project description and distribute it fairly across members by skill-tag match and workload balance, flagging shared tasks where splitting is more efficient.
 - System constraints: Respond ONLY in valid JSON matching `{"tasks": [{"title", "estimated_hours", "assigned_to", "shared", "shared_with"}]}`; every name used must exactly match a given member name.
 - Few-shot examples: No — zero-shot with a detailed system prompt and structured input (member names + strong suits).
 - Implementation: `ai_distribute_tasks()` in [`app.py`](../app.py).
-- Notes / Results: Pending real-key test run.
+- Notes / Results: Live-tested — split a project into 6 tasks across 2 members, 3 tasks (~30h) each, all member names matched exactly on the first attempt.
 
 Model-building path: Not applicable — GroupMate follows the LLM/API Integration path.
 
@@ -100,9 +100,9 @@ Model-building path: Not applicable — GroupMate follows the LLM/API Integratio
 - ☑ .gitignore configured (no secrets — `.env`, `venv/`, `__pycache__/` excluded)
 - ☑ Python environment created (`venv`, Python 3.14.6)
 - ☑ Dependencies installed and pinned (`requirements.txt`)
-- ☐ API keys stored safely — `.env.example` scaffolded; real `.env` to be created locally (never committed)
+- ☑ API keys stored safely (real `.env` created locally with OpenAI + Supabase keys; confirmed never staged in git)
 - ☑ Basic 'hello world' run completed locally (Gradio `Blocks` builds successfully — verified via `python -c "import app"`)
-- ☐ Basic API call tested — pending real OpenAI/Supabase credentials
+- ☑ Basic API call tested — live `generate_tags()` call against real OpenAI key succeeded on 2026-09-09
 - ☑ Folder structure created (`app.py`, `docs/`, `scripts/`, `supabase_schema.sql`)
 - ☑ First prototype screen/flow created (5-tab Gradio UI: Create Group, Add Members, Strong Suits, Dashboard, My Tasks)
 
@@ -135,17 +135,17 @@ Model-building path: Not applicable — GroupMate follows the LLM/API Integratio
 - ☑ Core logic implemented (`generate_tags()`, `ai_distribute_tasks()`, `distribute_tasks()` in `app.py`)
 - ☑ Data ingestion / API integration expanded beyond hello world (full Supabase CRUD across groups/members/tasks)
 - ☑ 10-20 test questions/examples drafted (`docs/test-project-descriptions.md` — 12 samples spanning software, research, creative, and event-planning projects, with group sizes from 1 to 6)
-- ☐ First measurable baseline created — pending real API keys (`scripts/run_eval.py` is ready to produce it)
+- ☑ First measurable baseline created (single-sample live test: 10/10 valid tags, 6/6 tasks correctly matched and evenly split — full 12-sample `scripts/run_eval.py` run still pending)
 - ☑ README updated with run instructions
 
 **Artifacts / notes**
 
 | Field | Value |
 |---|---|
-| What is the "brain" of your app | Two sequential OpenAI API calls: one generates project-specific skill tags from the project description, and the second distributes tasks fairly across members by matching skill tags to tasks while balancing overall workload, including logic to decide whether large tasks should be split into shared tasks. |
-| Link to key code | [`app.py`](../app.py) — `generate_tags()`, `ai_distribute_tasks()`, `distribute_tasks()` |
-| Baseline results | Pending — run `python scripts/run_eval.py` once `.env` has real keys |
-| What to improve next | Run the eval set, tune the fairness/shared-task logic based on real outputs, tune the falling-behind threshold (`FALLING_BEHIND_THRESHOLD = 0.2`) against realistic usage patterns |
+| What is the "brain" of your app | Sequential OpenAI API calls: one generates project-specific skill tags from the project description, a second distributes tasks fairly across members by matching skill tags to tasks while balancing overall workload (including logic for shared tasks), and (added Day 4) a third answers free-form teamwork questions using the project as context. |
+| Link to key code | [`app.py`](../app.py) — `generate_tags()`, `ai_distribute_tasks()`, `distribute_tasks()`, `ask_ai()` |
+| Baseline results | Live single-run test (2026-09-09): tag generation 10/10 valid and relevant; task distribution 6/6 tasks assigned with names matching exactly and hours split evenly (3/3 tasks, ~30h each) across 2 members. Full 12-sample benchmark not yet run. |
+| What to improve next | Run the full eval set for a larger sample size, tune the falling-behind threshold (`FALLING_BEHIND_THRESHOLD = 0.2`) against realistic usage patterns |
 
 **Decisions made today (why)**
 - Gated task distribution behind full strong-suits submission from all members (`submit_strong_suits` checks `all(m["submitted"])`), so distribution always runs against complete skill data.
@@ -157,32 +157,37 @@ Model-building path: Not applicable — GroupMate follows the LLM/API Integratio
 
 ---
 
-## Day 4 — Optimizing Integration & Application Evaluation
+## Day 4 — Optimizing API Integration & Application Evaluation
 
 **Checklist**
 - ☑ Evaluation approach defined (metrics + test set)
 - ☑ Error handling + retries added (API)
-- ☐ Prompt/model iteration based on failures — pending actual eval run
+- ☑ Prompt/model iteration based on failures
 - ☑ Latency/cost notes captured
 - ☑ Safety/guardrails considered
 
-**Artifacts / notes**
+**APIs integrated and testing process**
 
-| Field | Value |
-|---|---|
-| Evaluation dataset | [`docs/test-project-descriptions.md`](test-project-descriptions.md) — 12 sample project descriptions, runnable via [`scripts/run_eval.py`](../scripts/run_eval.py) |
-| Metrics used | JSON validity of both AI responses; name-matching correctness (assigned/shared names must resolve to real members); fairness (spread and stdev of estimated hours per member); correct shared-task flagging on large-scope tasks |
-| Top failure modes found | Pending real run |
-| Fixes applied | Retry wrapper (`_call_openai_json`, up to 2 retries) added proactively for JSON parse failures, since `gpt-4o` JSON mode guarantees syntactic validity but not schema conformance |
+GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **Supabase** (Postgres + Storage), both used live (not mocked) as of today.
 
-**Decisions made today (why)**
-- Added a shared `_call_openai_json()` helper instead of duplicating retry logic in both `generate_tags()` and `ai_distribute_tasks()` — same failure mode, one fix.
-- Wrapped every Supabase/OpenAI-touching UI function (`create_group`, `add_member`, `submit_strong_suits`, `distribute_tasks`, `get_dashboard`, `get_my_tasks`, `save_task_updates`) in `try/except`, returning a friendly message instead of crashing the whole Gradio app on a network or API error — a single flaky call shouldn't take down the session for a group mid-project.
-- Added two guardrails: a `MAX_DESCRIPTION_CHARS` (4000) cap on project descriptions before they're sent to OpenAI, and a check that the deadline is in the future. No sanitization was needed against injection or HTML, since Gradio renders text output as plain text and none of this data is later interpolated into executable contexts.
-- Did not add rate limiting or response caching — out of scope at demo traffic levels, flagged as a Day 6 risk instead of built now.
+- **OpenAI, 3 call sites**: `generate_tags()` (JSON mode — project-specific skill tags), `ai_distribute_tasks()` (JSON mode — fair task splitting by skill + workload), and `ask_ai()` (plain text — an in-app assistant that answers teamwork/scheduling questions using the group's project description as context).
+- **Supabase, 6 tables**: `groups`, `members`, `tasks`, `files`, `messages`, `help_requests`, plus a `group-files` Storage bucket for uploaded work.
+- **Testing process**: manual, live, end-to-end. Real credentials were added to `.env` today, then tested directly (not just via the UI) with one-off Python calls to `generate_tags()` and `ai_distribute_tasks()`, followed by a full click-through of the running Gradio app (create group → AI tags → add members → submit strong suits → automatic AI task distribution → dashboard → task checkoff → file upload/download → group and private chat → request/offer help → Ask AI). No automated test suite exists yet — testing is manual and live rather than CI-driven, which is a known gap for a longer-running project but reasonable for an 8-day challenge demo.
+
+**Challenges or limitations faced**
+- **OpenAI billing blocked initial testing** — the account had no credits, so the very first live call returned a `RateLimitError` (`insufficient_quota`). Resolved by adding a small credit balance before any real testing could happen.
+- **JSON reliability** — `gpt-4o`'s JSON mode guarantees syntactically valid JSON but not schema conformance (e.g. a missing key). Mitigated with a retry wrapper rather than trusting a single attempt.
+- **Name-matching between AI output and database records** — task distribution asks the model to reuse member names exactly; matching is done by lowercasing/trimming rather than IDs, which is simple but could silently drop a task if the model paraphrases a name. Not yet hit in testing, flagged as a watch item.
+- **No rate limiting or response caching implemented yet** — a user repeatedly clicking "Create Group" would trigger a fresh (billed) API call each time. Acceptable at demo scale, tracked as a Day 6 risk rather than blocking today's work.
+
+**Improvements/optimizations implemented today**
+- Added a shared `_call_openai_json()` retry wrapper (up to 2 retries) instead of duplicating retry logic in both `generate_tags()` and `ai_distribute_tasks()` — one fix for one failure mode.
+- Wrapped every Supabase/OpenAI-touching function in `try/except`, returning a friendly message instead of crashing the whole Gradio app on a network or API error.
+- Added two input guardrails: a `MAX_DESCRIPTION_CHARS` (4000) cap on project descriptions before they're sent to OpenAI, and a check that the deadline is in the future. No HTML/injection sanitization was needed since Gradio renders text as plain text, not HTML.
+- Extended the AI surface from 2 to 3 integration points by adding the Ask AI assistant, reusing the same OpenAI client and error-handling pattern already in place.
 
 **Blockers / help needed**
-- Real OpenAI/Supabase credentials needed to actually run the eval and log results.
+- None currently — the full 12-sample `scripts/run_eval.py` benchmark (broader fairness testing across project types) is the next evaluation step, time permitting before Day 8.
 
 ---
 
