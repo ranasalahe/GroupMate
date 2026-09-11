@@ -6,12 +6,16 @@ submitted, AI distributes tasks fairly -> members track progress on a
 shared dashboard.
 """
 
+import base64
+import io
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 import gradio as gr
 import numpy as np
+import qrcode
 from dateutil import parser as date_parser
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -147,6 +151,51 @@ def _clamp_task_hours(value) -> float:
     except (TypeError, ValueError):
         return 1.0
     return max(MIN_TASK_HOURS, min(MAX_TASK_HOURS, hours))
+
+
+# ---------------------------------------------------------------------------
+# Sharing: join links + QR codes
+# ---------------------------------------------------------------------------
+
+def _build_join_url(request: gr.Request | None, group_id: str) -> str:
+    """Best-effort join URL from the incoming request's Host header.
+
+    Falls back to the bare group ID if no request context is available
+    (e.g. when called outside a live Gradio session).
+    """
+    if request is None:
+        return group_id
+    try:
+        host = dict(request.headers).get("host", "localhost:7860")
+    except Exception:
+        host = "localhost:7860"
+    scheme = "http" if host.startswith("localhost") or host.startswith("127.0.0.1") else "https"
+    return f"{scheme}://{host}/?group={group_id}"
+
+
+def _generate_qr_html(url: str) -> str:
+    img = qrcode.make(url, box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    return (
+        '<div style="text-align:center;">'
+        f'<img src="{data_uri}" width="160" height="160" '
+        'style="border:2px solid #8B6F47;border-radius:10px;" alt="Join QR code"/>'
+        "</div>"
+    )
+
+
+def _extract_group_id(raw: str) -> str:
+    """Accept a bare Group ID, a full join URL, or a URL with a trailing ID."""
+    raw = raw.strip()
+    if not raw:
+        return ""
+    if "group=" in raw:
+        return raw.split("group=", 1)[1].split("&", 1)[0].strip()
+    if "/" in raw:
+        return raw.rstrip("/").split("/")[-1].strip()
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -1067,12 +1116,54 @@ RESPONSIVE_CSS = """
 }
 """
 
-def create_group_ui(name: str, description: str, deadline_str: str):
+def create_group_ui(
+    name: str,
+    description: str,
+    deadline_str: str,
+    admin_name: str,
+    member_names_raw: str,
+    request: gr.Request,
+):
     group_id, status, tags = create_group(name, description, deadline_str)
     tags_md = "\n".join(f"- {t}" for t in tags) if tags else ""
-    stay_here = gr.update(visible=True)
-    move_on = gr.update(visible=bool(group_id))
-    return group_id, status, tags_md, gr.update(visible=not group_id), move_on
+
+    if not group_id:
+        return "", status, tags_md, "", ""
+
+    for raw_name in [admin_name] + re.split(r"[,\n]", member_names_raw or ""):
+        raw_name = raw_name.strip()
+        if raw_name:
+            add_member(group_id, raw_name)
+
+    join_url = _build_join_url(request, group_id)
+    qr_html = _generate_qr_html(join_url)
+    return group_id, status, tags_md, join_url, qr_html
+
+
+def join_group_ui(raw_group_id: str):
+    """Accept a pasted join URL or bare Group ID and validate it exists."""
+    group_id = _extract_group_id(raw_group_id)
+    if not group_id:
+        return "", "Paste the group's join link or Group ID first.", gr.update(visible=True), gr.update(visible=False)
+    try:
+        db = get_supabase()
+        found = db.table("groups").select("id").eq("id", group_id).execute()
+    except Exception as exc:
+        return "", f"Could not verify that group: {exc}", gr.update(visible=True), gr.update(visible=False)
+    if not found.data:
+        return "", "No group found with that link/ID.", gr.update(visible=True), gr.update(visible=False)
+    return group_id, "", gr.update(visible=False), gr.update(visible=True)
+
+
+def load_deep_link(request: gr.Request):
+    """Pre-fill the Group ID if the page was opened via a shared join link."""
+    try:
+        group_id = dict(request.query_params).get("group", "") if request else ""
+    except Exception:
+        group_id = ""
+    if not group_id:
+        return "", gr.update(), gr.update()
+    return group_id, gr.update(visible=False), gr.update(visible=True)
 
 
 def _advance():
@@ -1095,17 +1186,47 @@ with gr.Blocks(title="GroupMate") as demo:
             info="Used for Strong Suits and My Tasks.",
         )
 
-    # --- Step 1: Create Group ---------------------------------------------
-    with gr.Column(visible=True) as step_create:
-        gr.Markdown("## Create Group")
-        gr.Markdown("Start a new project. This generates skill tags and a Group ID to share.")
+    # --- Step: Welcome ------------------------------------------------
+    with gr.Column(visible=True) as step_welcome:
+        gr.Markdown("## Welcome to GroupMate")
+        gr.Markdown("Fair, AI-powered task distribution for group projects.")
+        with gr.Row(elem_classes="step-nav-row"):
+            welcome_start = gr.Button("🚀 Start New Group Project", variant="primary")
+            welcome_join = gr.Button("🔗 Join Existing Group Project", variant="secondary")
+
+    # --- Step: Create Group (Group Admin) ---------------------------------------------
+    with gr.Column(visible=False) as step_create:
+        gr.Markdown("## You're the Group Admin")
+        gr.Markdown("Fill out the details below. This generates skill tags and a link to share.")
         cg_name = gr.Textbox(label="Project / Group Name")
         cg_description = gr.Textbox(label="Project Description", lines=5)
         cg_deadline = gr.Textbox(label="Deadline", placeholder="2026-09-20 18:00")
-        cg_button = gr.Button("Create Group & Continue →", variant="primary")
+        cg_members = gr.Textbox(
+            label="Group Members",
+            placeholder="One per line or comma-separated — you'll be added automatically too",
+            lines=2,
+        )
+        cg_button = gr.Button("Create Group", variant="primary")
         cg_status = gr.Markdown()
         cg_tags = gr.Markdown()
-        cg_skip = gr.Button("I already have a Group ID →", variant="secondary")
+        with gr.Group():
+            gr.Markdown("### Share with your group")
+            cg_join_url = gr.Textbox(label="Join Link", interactive=False, buttons=["copy"])
+            cg_qr = gr.HTML()
+        with gr.Row(elem_classes="step-nav-row"):
+            cg_back = gr.Button("← Back", variant="secondary")
+            cg_next = gr.Button("Continue to Add Members →", variant="primary")
+
+    # --- Step: Join Existing Group ---------------------------------------------
+    with gr.Column(visible=False) as step_join:
+        gr.Markdown("## Join an Existing Group")
+        jn_input = gr.Textbox(
+            label="Paste the group's join link or Group ID",
+            placeholder="https://.../?group=... or just the Group ID",
+        )
+        jn_button = gr.Button("Join", variant="primary")
+        jn_status = gr.Markdown()
+        jn_back = gr.Button("← Back", variant="secondary")
 
     # --- Step 2: Add Members ------------------------------------------------
     with gr.Column(visible=False) as step_members:
@@ -1243,10 +1364,16 @@ with gr.Blocks(title="GroupMate") as demo:
         return _fn
 
     # --- Wiring: step content ------------------------------------------------
+    demo.load(
+        load_deep_link, inputs=None, outputs=[shared_group_id, step_welcome, step_members]
+    )
     cg_button.click(
         create_group_ui,
-        inputs=[cg_name, cg_description, cg_deadline],
-        outputs=[shared_group_id, cg_status, cg_tags, step_create, step_members],
+        inputs=[cg_name, cg_description, cg_deadline, shared_name, cg_members],
+        outputs=[shared_group_id, cg_status, cg_tags, cg_join_url, cg_qr],
+    )
+    jn_button.click(
+        join_group_ui, inputs=jn_input, outputs=[shared_group_id, jn_status, step_join, step_members]
     )
     am_button.click(add_member, inputs=[shared_group_id, am_name], outputs=am_status)
     ss_load_button.click(
@@ -1293,12 +1420,16 @@ with gr.Blocks(title="GroupMate") as demo:
     ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, ai_question], outputs=ai_answer)
 
     # --- Wiring: step navigation ------------------------------------------------
-    cg_skip.click(_advance, outputs=[step_create, step_members])
+    welcome_start.click(_advance, outputs=[step_welcome, step_create])
+    welcome_join.click(_advance, outputs=[step_welcome, step_join])
+    cg_back.click(_advance, outputs=[step_create, step_welcome])
+    jn_back.click(_advance, outputs=[step_join, step_welcome])
+    cg_next.click(_advance, outputs=[step_create, step_members])
     am_next.click(_advance, outputs=[step_members, step_suits])
     ss_next.click(_advance, outputs=[step_suits, step_shell])
     am_back.click(_advance, outputs=[step_members, step_create])
     ss_back.click(_advance, outputs=[step_suits, step_members])
-    settings_restart.click(_advance, outputs=[step_shell, step_create])
+    settings_restart.click(_advance, outputs=[step_shell, step_welcome])
 
     nav_home.click(_nav_to(0), outputs=PAGES)
     nav_progress.click(_nav_to(1), outputs=PAGES)
