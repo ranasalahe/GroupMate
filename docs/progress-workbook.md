@@ -174,6 +174,21 @@ GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **
 - **Supabase, 6 tables**: `groups`, `members`, `tasks`, `files`, `messages`, `help_requests`, plus a `group-files` Storage bucket for uploaded work.
 - **Testing process**: manual, live, end-to-end. Real credentials were added to `.env` today, then tested directly (not just via the UI) with one-off Python calls to `generate_tags()` and `ai_distribute_tasks()`, followed by a full click-through of the running Gradio app (create group → AI tags → add members → submit strong suits → automatic AI task distribution → dashboard → task checkoff → file upload/download → group and private chat → request/offer help → Ask AI). No automated test suite exists yet — testing is manual and live rather than CI-driven, which is a known gap for a longer-running project but reasonable for an 8-day challenge demo.
 
+**API rate limits & latency**
+- Aware of OpenAI's per-tier rate limits (requests/tokens per minute on `gpt-4o`); GroupMate's usage pattern (a handful of calls per group action, not a chat loop) stays well under them at demo scale, so no request queuing or caching has been built yet — deliberately deferred rather than overlooked (see Day 6 risk log).
+- No real-time-interaction requirement (no streaming chat) means the observed 2-4s response time per call doesn't need special latency handling; the UI shows Gradio's built-in loading state while waiting.
+
+**Data handling and preprocessing**
+- **Input**: project descriptions are `.strip()`-ed and capped at `MAX_DESCRIPTION_CHARS` (4000) before being sent to OpenAI; deadlines are parsed and validated (must be a real future date) before being stored or used in prompts.
+- **Output**: both structured AI responses are parsed as JSON (`json.loads`), then post-processed — task `assigned_to`/`shared_with` names are lowercased/trimmed and matched back to real member records before being written to Supabase, so the app never stores a raw, unvalidated AI string as a foreign key.
+
+**Fine-tuning**
+- Not applicable at this scope. GroupMate uses `gpt-4o` off-the-shelf with prompt engineering (not fine-tuning) for both structured tasks — the task (generating tags / splitting work for an arbitrary, one-off project description) doesn't have a stable enough pattern across projects to justify building a fine-tuning dataset within the challenge timeline.
+
+**Performance & evaluation metrics**
+- Generic LLM metrics like BLEU or sentiment scores don't fit this app (it's not translation or chat) — instead, evaluation uses task-specific metrics defined in [`docs/test-project-descriptions.md`](test-project-descriptions.md) and [`scripts/run_eval.py`](../scripts/run_eval.py): JSON/schema validity, name-matching correctness, and workload fairness (spread and stdev of hours across members).
+- The 12-sample eval set spans different project types and group sizes (1 to 6 members, including members with no strong suits selected) specifically to cover edge cases beyond the single live smoke test run so far.
+
 **Challenges or limitations faced**
 - **OpenAI billing blocked initial testing** — the account had no credits, so the very first live call returned a `RateLimitError` (`insufficient_quota`). Resolved by adding a small credit balance before any real testing could happen.
 - **JSON reliability** — `gpt-4o`'s JSON mode guarantees syntactically valid JSON but not schema conformance (e.g. a missing key). Mitigated with a retry wrapper rather than trusting a single attempt.
