@@ -328,19 +328,19 @@ def _distribute_tasks(group_id: str) -> str:
 
 def get_dashboard(group_id: str):
     if not group_id.strip():
-        return "Please provide a Group ID.", None, "—", ""
+        return _ring_svg(0, "GroupTracker"), "<p>Please provide a Group ID.</p>", "—", ""
 
     try:
         return _get_dashboard(group_id)
     except Exception as exc:
-        return f"Could not load dashboard: {exc}", None, "—", ""
+        return _ring_svg(0, "GroupTracker"), f"<p>Could not load dashboard: {exc}</p>", "—", ""
 
 
 def _get_dashboard(group_id: str):
     db = get_supabase()
     group = db.table("groups").select("name, deadline").eq("id", group_id.strip()).execute()
     if not group.data:
-        return "No group found with that ID.", None, "—", ""
+        return _ring_svg(0, "GroupTracker"), "<p>No group found with that ID.</p>", "—", ""
 
     deadline = date_parser.parse(group.data[0]["deadline"])
     now = datetime.now(timezone.utc)
@@ -354,7 +354,7 @@ def _get_dashboard(group_id: str):
     tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
 
     if not tasks:
-        return "No tasks yet — waiting on task distribution.", None, countdown, ""
+        return _ring_svg(0, "GroupTracker"), "<p>No tasks yet — waiting on task distribution.</p>", countdown, ""
 
     created_at = date_parser.parse(
         db.table("groups").select("created_at").eq("id", group_id.strip()).execute().data[0]["created_at"]
@@ -364,7 +364,7 @@ def _get_dashboard(group_id: str):
         min(max((now - created_at).total_seconds() / total_span, 0), 1) if total_span > 0 else 1
     )
 
-    rows = []
+    member_cards = []
     total_tasks = 0
     total_done = 0
     behind_members = []
@@ -382,16 +382,24 @@ def _get_dashboard(group_id: str):
         is_behind = (elapsed_fraction - completion_fraction) > FALLING_BEHIND_THRESHOLD
         if is_behind:
             behind_members.append(member["name"])
-        rows.append(
-            [member["name"], f"{done}/{count}", f"{round(completion_fraction * 100)}%", "Yes" if is_behind else "No"]
+        flag = (
+            '<span title="May need a hand" style="font-size:1.1rem;">🚩</span>' if is_behind else ""
+        )
+        member_cards.append(
+            '<div style="display:flex;align-items:center;gap:10px;background:#FCF8EF;'
+            "border:2px solid #8B6F47;border-radius:14px;padding:10px 16px;min-width:170px;\">"
+            f'{_ring_svg(completion_fraction * 100, member["name"], size=76)}{flag}</div>'
         )
 
-    group_progress = f"{round((total_done / total_tasks) * 100) if total_tasks else 0}% of tasks complete"
+    members_html = (
+        '<div style="display:flex;flex-wrap:wrap;gap:14px;">' + "".join(member_cards) + "</div>"
+    )
+    group_ring = _ring_svg((total_done / total_tasks * 100) if total_tasks else 0, "GroupTracker", size=120)
     nudge = "\n\n".join(
         f"🚩 **{name}** may need a hand — visit **Offer Help** to reach out."
         for name in behind_members
     )
-    return group_progress, rows, countdown, nudge
+    return group_ring, members_html, countdown, nudge
 
 
 def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[str]):
@@ -687,6 +695,37 @@ def get_home_view(group_id: str, member_name: str):
 # Messaging (group chat + private chats)
 # ---------------------------------------------------------------------------
 
+def _chat_bubbles_html(rows: list[dict], viewer_name: str) -> str:
+    if not rows:
+        return "<p style='color:#57534A;'><em>No messages yet — say hi!</em></p>"
+    bubbles = []
+    for r in rows:
+        is_mine = r["sender_name"].strip().lower() == viewer_name.strip().lower()
+        align = "flex-end" if is_mine else "flex-start"
+        bg = "#EAE0C7" if is_mine else "#FCF8EF"
+        bubbles.append(
+            f'<div style="display:flex;flex-direction:column;align-items:{align};margin:6px 0;">'
+            f'<div style="background:{bg};border:2px solid #8B6F47;border-radius:14px;'
+            f'padding:8px 14px;max-width:80%;">'
+            f'<div style="font-weight:700;font-size:0.8rem;">{r["sender_name"]}</div>'
+            f'<div>{r["body"]}</div></div></div>'
+        )
+    return '<div style="display:flex;flex-direction:column;">' + "".join(bubbles) + "</div>"
+
+
+def list_other_members(group_id: str, self_name: str):
+    """Names of every group member except the viewer, for the private-chat picker."""
+    if not group_id.strip():
+        return gr.Radio(choices=[])
+    try:
+        db = get_supabase()
+        rows = db.table("members").select("name").eq("group_id", group_id.strip()).execute().data
+    except Exception:
+        return gr.Radio(choices=[])
+    names = [r["name"] for r in rows if r["name"].strip().lower() != self_name.strip().lower()]
+    return gr.Radio(choices=names)
+
+
 def send_group_message(group_id: str, sender_name: str, body: str):
     if not group_id.strip() or not sender_name.strip() or not body.strip():
         return "", "Please provide a Group ID, your name, and a message."
@@ -700,9 +739,9 @@ def send_group_message(group_id: str, sender_name: str, body: str):
     return "", ""
 
 
-def get_group_chat(group_id: str):
+def get_group_chat(group_id: str, viewer_name: str = ""):
     if not group_id.strip():
-        return "Please provide a Group ID."
+        return "<p>Please provide a Group ID.</p>"
     try:
         db = get_supabase()
         rows = (
@@ -715,10 +754,8 @@ def get_group_chat(group_id: str):
             .data
         )
     except Exception as exc:
-        return f"Could not load chat: {exc}"
-    if not rows:
-        return "_No messages yet — say hi!_"
-    return "\n\n".join(f"**{r['sender_name']}:** {r['body']}" for r in rows)
+        return f"<p>Could not load chat: {exc}</p>"
+    return _chat_bubbles_html(rows, viewer_name)
 
 
 def send_private_message(group_id: str, sender_name: str, recipient_name: str, body: str):
@@ -741,7 +778,7 @@ def send_private_message(group_id: str, sender_name: str, recipient_name: str, b
 
 def get_private_chat(group_id: str, member_a: str, member_b: str):
     if not group_id.strip() or not member_a.strip() or not member_b.strip():
-        return "Please provide a Group ID, your name, and a teammate to chat with."
+        return "<p>Please provide a Group ID, your name, and a teammate to chat with.</p>"
     try:
         db = get_supabase()
         rows = (
@@ -761,7 +798,7 @@ def get_private_chat(group_id: str, member_a: str, member_b: str):
             .data
         )
     except Exception as exc:
-        return f"Could not load chat: {exc}"
+        return f"<p>Could not load chat: {exc}</p>"
 
     names = {member_a.strip().lower(), member_b.strip().lower()}
     thread = sorted(
@@ -769,8 +806,8 @@ def get_private_chat(group_id: str, member_a: str, member_b: str):
         key=lambda r: r["created_at"],
     )
     if not thread:
-        return f"_No messages with {member_b} yet._"
-    return "\n\n".join(f"**{r['sender_name']}:** {r['body']}" for r in thread)
+        return f"<p style='color:#57534A;'><em>No messages with {member_b} yet.</em></p>"
+    return _chat_bubbles_html(thread, member_a)
 
 
 # ---------------------------------------------------------------------------
@@ -1121,8 +1158,9 @@ with gr.Blocks(title="GroupMate") as demo:
                     home_tasks = gr.CheckboxGroup(choices=[], label="My tasks")
                     home_save = gr.Button("Save Task Updates", variant="primary")
                     gr.Markdown("### Private Chat")
-                    home_dm_to = gr.Textbox(label="Message a teammate", placeholder="Teammate's name")
-                    home_dm_thread = gr.Markdown()
+                    home_dm_refresh = gr.Button("Show Teammates")
+                    home_dm_to = gr.Radio(choices=[], label="Message a teammate")
+                    home_dm_thread = gr.HTML()
                     home_dm_load = gr.Button("Load Chat")
                     home_dm_input = gr.Textbox(label="Message", placeholder="Type a message...")
                     home_dm_send = gr.Button("Send", variant="primary")
@@ -1132,18 +1170,16 @@ with gr.Blocks(title="GroupMate") as demo:
                     gr.Markdown("## Group Progress")
                     gp_refresh = gr.Button("Refresh", variant="primary")
                     gp_countdown = gr.Markdown()
-                    gp_progress = gr.Markdown()
-                    gp_table = gr.Dataframe(
-                        headers=["Member", "Tasks Done", "Completion %", "Falling Behind?"],
-                        label="Per-member progress",
-                    )
+                    with gr.Row():
+                        gp_members = gr.HTML()
+                        gp_progress = gr.HTML()
                     gp_nudge = gr.Markdown()
 
                 # --- Page: Group Chat ---
                 with gr.Column(visible=False) as page_chat:
                     gr.Markdown("## Group Chat")
                     gc_refresh = gr.Button("Refresh Chat", variant="primary")
-                    gc_feed = gr.Markdown()
+                    gc_feed = gr.HTML()
                     gc_input = gr.Textbox(label="Message", placeholder="Type a message to the group...")
                     gc_send = gr.Button("Send", variant="primary")
 
@@ -1189,8 +1225,8 @@ with gr.Blocks(title="GroupMate") as demo:
                     )
                     settings_restart = gr.Button("🔄 Start Over / Join a Different Group", variant="secondary")
 
-        gr.Markdown("---")
-        with gr.Accordion("💡 Ask AI", open=False):
+        with gr.Group():
+            gr.Markdown("### 💡 Ask AI")
             ai_question = gr.Textbox(
                 label="Ask the assistant",
                 placeholder="e.g. How do I help a teammate who's falling behind?",
@@ -1227,6 +1263,7 @@ with gr.Blocks(title="GroupMate") as demo:
     home_save.click(
         save_task_updates, inputs=[shared_group_id, shared_name, home_tasks], outputs=home_status
     )
+    home_dm_refresh.click(list_other_members, inputs=[shared_group_id, shared_name], outputs=home_dm_to)
     home_dm_load.click(
         get_private_chat, inputs=[shared_group_id, shared_name, home_dm_to], outputs=home_dm_thread
     )
@@ -1236,12 +1273,12 @@ with gr.Blocks(title="GroupMate") as demo:
         outputs=[home_dm_input, home_status],
     ).then(get_private_chat, inputs=[shared_group_id, shared_name, home_dm_to], outputs=home_dm_thread)
     gp_refresh.click(
-        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_table, gp_countdown, gp_nudge]
+        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_members, gp_countdown, gp_nudge]
     )
-    gc_refresh.click(get_group_chat, inputs=shared_group_id, outputs=gc_feed)
+    gc_refresh.click(get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed)
     gc_send.click(
         send_group_message, inputs=[shared_group_id, shared_name, gc_input], outputs=[gc_input, gc_feed]
-    ).then(get_group_chat, inputs=shared_group_id, outputs=gc_feed)
+    ).then(get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed)
     fl_upload.click(
         upload_file,
         inputs=[shared_group_id, shared_name, fl_file, fl_editable],
