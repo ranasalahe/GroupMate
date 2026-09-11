@@ -1727,4 +1727,9 @@ with gr.Blocks(title="GroupMate") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(theme=CREAM_THEME, css=RESPONSIVE_CSS)
+    demo.launch(
+        theme=CREAM_THEME,
+        css=RESPONSIVE_CSS,
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("PORT", 7860)),
+    )
