@@ -4,10 +4,14 @@ Target length: ~4-5 minutes. This is the "how it's built" video (backend,
 architecture, LLM integration) — different from the Day 8 demo video, which
 just shows the app being used.
 
-Record your screen with the app open at `http://localhost:7860` (or your
-deployed Space, once live) and `app.py` open in an editor for the code
-sections. Read the narration in your own words — this is a script to work
-from, not to read verbatim.
+Record your screen with the app open at `http://localhost:7860` and `app.py`
+open in an editor for the code sections. Read the narration in your own
+words — this is a script to work from, not to read verbatim.
+
+(Running locally rather than on a deployed Hugging Face Space — Spaces now
+requires a paid PRO plan to host Gradio apps, confirmed directly on the
+account's own Space-creation page. Documented in the workbook's Day 7
+section rather than silently skipped.)
 
 ---
 
@@ -120,4 +124,4 @@ from, not to read verbatim.
 
 - Record in short segments per section — easier to re-take one part than the whole thing.
 - Keep code screens on-screen for at least 5-8 seconds so viewers can actually read them.
-- If you don't have Hugging Face deployed yet by recording time, run locally (`python app.py`) and say so — that's fine per the checkpoint's own note ("even if you have not completed the project, send a video explaining what you have done").
+- Mention briefly that it's running locally (not on a deployed Space) because of the Hugging Face PRO requirement — a one-sentence, matter-of-fact note, not an apology. The checkpoint itself says a video explaining what you've done is fine even if something isn't finished.
