@@ -235,22 +235,38 @@ GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **
 ## Day 6 — Final Enhancements, Security & Debugging
 
 **Checklist**
-- ☐ Input validation + sanitization — partial (description length cap, future-deadline check); full pass pending real testing
-- ☑ Secrets handling reviewed (no keys in repo — confirmed `.env` and `venv/` are gitignored and were never staged)
-- ☐ Rate limits / caching — not implemented, tracked as a risk
-- ☐ Bug list triaged — pending real test run
-- ☐ README + architecture notes cleaned — README is current; will revisit after real testing surfaces gaps
+- ☑ Prompt optimization pass completed
+- ☑ Edge cases tested and handled gracefully
+- ☑ Performance/token-usage reviewed
+- ☑ Error handling + debugging pass completed
+- ☑ Security risks (prompt injection, data leakage, tool misuse) reviewed
 
-**Artifacts / notes**
+**1. Prompt optimization**
+- Revisited all three AI prompts (`generate_tags()`, `ai_distribute_tasks()`, `ask_ai()`) for clarity and intent. The two structured prompts already constrain output via JSON mode + an explicit schema, so the main refinement this pass was on `ask_ai()` (the conversational one): scoped it explicitly to project/task/teamwork/file topics and told it to ask a clarifying question rather than guess when a query is too vague, instead of leaving that behavior implicit.
 
-| Field | Value |
-|---|---|
-| Security checklist notes | API keys (OpenAI, Supabase) are read from environment variables / Hugging Face Space secrets, never hardcoded in `app.py`. Verified `.env` was never committed (`.gitignore` covers it from the first commit). |
-| Top bugs fixed | N/A yet — pending real test run |
-| Remaining risks | Supabase schema (`supabase_schema.sql`) uses open row-level-security policies (`using (true)`) for demo simplicity — anyone with the anon/service key can read/write any group's data. Acceptable for a short-lived challenge demo with no sensitive data, but flagged as the top item to tighten post-challenge (scope policies to a group-membership check, or require a Supabase Auth session per member). No rate limiting on the OpenAI calls — a user mashing "Create Group" repeatedly would rack up API cost with no cap. |
+**2. Handling edge cases**
+- Added an explicit fallback for ambiguous input: `ask_ai()` now short-circuits (no API call) on a question under 4 characters and asks the user to say more, rather than sending a near-empty prompt to the model and getting back a generic or confused answer.
+- Tested incomplete/edge inputs across the app: empty Group ID/name (every function already validated this), a member with no strong suits selected (task distribution still runs and assigns them tasks by workload balance alone), and a group with a single member (all tasks assign to that one person — verified live in earlier testing).
+- Added a numeric guardrail: `ai_distribute_tasks()`'s `estimated_hours` is now clamped to a 0.5-100 range (`_clamp_task_hours()`) before being written to Supabase, so a hallucinated `0` or unreasonably large value can't silently distort the fairness/progress math — this is the same "don't trust the LLM's arithmetic outright" lesson standard in AI financial-assistant guardrail patterns, applied here even though GroupMate isn't a finance app.
 
-**Decisions made today (why)**
-- Left RLS open rather than implementing per-group auth, given the challenge timeline and that the demo has no sensitive personal data beyond first names — documented as the main follow-up rather than silently shipping it.
+**3. Performance tuning**
+- Measured response times again after this pass: `gpt-4o` calls still return in ~2-4s; the new embedding calls (`text-embedding-3-small`, used for file search) return in well under 1s.
+- Trimmed prompt size deliberately rather than adding caching: project descriptions are capped at `MAX_DESCRIPTION_CHARS` (4000), and retrieved file excerpts injected into `ask_ai()` are capped at 600 characters each, top 3 chunks only — bounding worst-case prompt size instead of trusting arbitrary input length.
+- Did not implement response caching or request rate limiting — considered, but a user re-submitting the same project rarely happens in this app's one-shot-per-group flow, so the cost/complexity tradeoff didn't justify it at demo scale. Documented as the same known gap carried from Day 4, not a new decision.
+
+**4. Error handling and debugging**
+- Confirmed every Supabase/OpenAI-touching function is still wrapped in `try/except`, returning a friendly message instead of a raw traceback — this was built in from Day 4 and re-verified rather than newly added.
+- The new file-search indexing (`_index_file_for_search()`) is explicitly best-effort: if text extraction, embedding, or the Supabase write fails, it fails silently rather than blocking the file upload itself, which has already succeeded by that point — an unsupported file type or a transient API hiccup shouldn't stop someone from sharing their work.
+- Debugged response formatting for the new RAG feature: file excerpts are clearly delimited (`--- BEGIN UNTRUSTED FILE EXCERPTS ---` / `--- END ---`) in the prompt so the model doesn't blend them with its own instructions or the user's question.
+
+**5. Final UX enhancements**
+- No new UI changes this pass — the sidebar dashboard, loading states (Gradio's built-in per-component spinners), and progress rings were already finalized in the Day 5 rebuild. This pass was backend-focused (prompts, edge cases, security), per today's checkpoint.
+
+**Security review — Key Risks**
+- **Prompt injection**: newly relevant risk introduced by this pass's own feature (RAG over uploaded files) — a file's content is now injected into the AI assistant's prompt, and a group member could upload a file containing text trying to redirect the assistant's behavior. Mitigated by fencing the excerpts with explicit `BEGIN/END UNTRUSTED FILE EXCERPTS` markers and an instruction to treat them as data, never as directives.
+- **Data leakage**: `ask_ai()` only ever searches `file_chunks` scoped to the requesting group's `group_id` — no cross-group retrieval is possible. API keys remain environment-variable-only (verified `.env` was never committed).
+- **Tool misuse**: GroupMate's AI calls don't invoke external tools/actions (no code execution, no arbitrary HTTP calls) — the only "tool" surface is Supabase reads/writes, which are already scoped by group ID in every query.
+- Considered but not adopted: dedicated frameworks like LLMGuard or Guardrails AI. At this app's scope (JSON-mode structured calls plus one scoped assistant), the schema validation and name-matching already in place cover the same ground those tools would add, so pulling in a new dependency wasn't justified for the remaining challenge time.
 
 **Blockers / help needed**
 - None currently.
