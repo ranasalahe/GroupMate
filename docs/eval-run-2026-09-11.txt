@@ -1,0 +1,83 @@
+
+=== Sample 1 ===
+Build a mobile app that helps students split shared apartment bills, with push n...
+Tags (10, valid=True): ['mobile app development', 'payment integration', 'push notifications', 'Flutter', 'Android', 'iOS', 'database management', 'UI/UX design', 'API development', 'JavaScript']
+Tasks: 6
+Hours per member: {'Ali': 25.0, 'Sara': 25.0, 'Omar': 20.0}
+Hour spread: 5.0 (stdev 2.36)
+
+=== Sample 2 ===
+Research report on the economic impact of remote work on the UAE real estate mar...
+Tags (10, valid=True): ['economic analysis', 'remote work impact', 'UAE real estate market', 'survey design', 'data collection', 'statistical analysis', 'report writing', 'market research', 'real estate economics', 'data visualization']
+Tasks: 8
+Hours per member: {'Layla': 38.5, 'Yousef': 41.5}
+Hour spread: 3.0 (stdev 1.5)
+
+=== Sample 3 ===
+Design and pitch a marketing campaign for a fictional sustainable fashion brand,...
+Tags (10, valid=True): ['brand strategy', 'creative copywriting', 'graphic design', 'social media marketing', 'pitch presentation', 'content creation', 'sustainability messaging', 'audience analysis', 'digital advertising', 'market research']
+Tasks: 5
+Hours per member: {'Mona': 20.0, 'Fahad': 15.0, 'Nour': 10.0, 'Zaid': 5.0}
+Hour spread: 15.0 (stdev 5.59)
+
+=== Sample 4 ===
+Build a full-stack e-commerce website with product listings, a shopping cart, an...
+Tags (10, valid=True): ['React frontend', 'Node.js backend', 'Stripe API', 'MongoDB', 'Express.js', 'RESTful API', 'CSS styling', 'JWT Authentication', 'responsive design', 'Redux']
+Tasks: 7
+Hours per member: {'Hassan': 38.8, 'Reem': 28.8, 'Tariq': 28.8, 'Dana': 15.0}
+Hour spread: 23.8 (stdev 8.45)
+
+=== Sample 5 ===
+Create a short documentary film about student mental health on campus, including...
+Tags (10, valid=True): ['documentary filmmaking', 'interview techniques', 'video editing', 'storyboarding', 'scriptwriting', 'audio recording', 'mental health awareness', 'cinematography', 'post-production', 'sound design']
+Tasks: 4
+Hours per member: {'Huda': 13.0, 'Karim': 17.0}
+Hour spread: 4.0 (stdev 2.0)
+
+=== Sample 6 ===
+Develop a machine learning model to predict student grades from study habits, wi...
+Tags (10, valid=True): ['machine learning', 'predictive modeling', 'data preprocessing', 'feature selection', 'Python', 'scikit-learn', 'study habits analysis', 'statistical analysis', 'report writing', 'data visualization']
+Tasks: 8
+Hours per member: {'Salma': 18.0, 'Adel': 16.0, 'Rania': 11.7, 'Bilal': 3.7, 'Nabil': 3.7}
+Hour spread: 14.3 (stdev 6.02)
+
+=== Sample 7 ===
+Plan and execute a charity fundraising event for a local shelter, including logi...
+Tags (10, valid=True): ['event planning', 'logistics management', 'sponsorship outreach', 'budgeting', 'venue selection', 'marketing strategy', 'volunteer coordination', 'donor engagement', 'risk management', 'ticketing systems']
+Tasks: 3
+Hours per member: {'Yasmin': 12.0, 'Khaled': 10.0, 'Lina': 10.0}
+Hour spread: 2.0 (stdev 0.94)
+
+=== Sample 8 ===
+Build a Discord bot that manages study group scheduling and sends reminder messa...
+Tags (9, valid=True): ['Discord API', 'bot development', 'Python programming', 'scheduling algorithms', 'reminder system', 'time zone management', 'database integration', 'interaction design', 'event handling']
+Tasks: 4
+Hours per member: {'Marwan': 30.0}
+
+=== Sample 9 ===
+Conduct a UX research study comparing two competing food delivery apps, culminat...
+Tags (10, valid=True): ['UX research', 'usability testing', 'comparative analysis', 'user interviews', 'survey design', 'persona development', 'task analysis', 'usability report writing', 'heuristic evaluation', 'data analysis']
+Tasks: 7
+Hours per member: {'Farah': 19.7, 'Ibrahim': 18.3, 'Noor': 15.0}
+Hour spread: 4.7 (stdev 1.96)
+
+=== Sample 10 ===
+Design a board game about climate change for high school classrooms, including r...
+Tags (10, valid=True): ['board game design', 'educational content', 'climate change education', 'prototype artwork', 'rules development', 'curriculum integration', 'classroom engagement', 'instructional design', 'graphic design', 'testing and iteration']
+Tasks: 5
+Hours per member: {'Aisha': 15.0, 'Waleed': 15.0, 'Huda': 15.0, 'Sami': 3.8, 'Talal': 3.8, 'Rasha': 3.8}
+Hour spread: 11.2 (stdev 5.62)
+
+=== Sample 11 ===
+Build an internal tool that scrapes and aggregates internship postings from five...
+Tags (10, valid=True): ['web scraping', 'Python', 'BeautifulSoup', 'Scrapy', 'API integration', 'data aggregation', 'dashboard development', 'JavaScript', 'user authentication', 'UI/UX design']
+Tasks: 8
+Hours per member: {'Ahmad': 29.0, 'Dalia': 24.0}
+Hour spread: 5.0 (stdev 2.5)
+
+=== Sample 12 ===
+Write and record a 6-episode podcast series on entrepreneurship in the Gulf, inc...
+Tags (10, valid=True): ['podcast production', 'guest outreach', 'entrepreneurship research', 'audio editing', 'script writing', 'Gulf region market', 'interview preparation', 'content scheduling', 'audio branding', 'platform distribution']
+Tasks: 15
+Hours per member: {'Jana': 15.0, 'Sultan': 10.7, 'Maya': 36.0, 'Fadi': 17.3}
+Hour spread: 25.3 (stdev 9.68)

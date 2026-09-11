@@ -42,19 +42,21 @@ For every sample, check:
 
 ## Results log
 
-Fill in after each run once real API keys are configured (see README).
+Run live via `python scripts/run_eval.py` on 2026-09-11 against real OpenAI credentials.
+Full analysis and per-sample breakdown: [`GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf).
+Raw script output: [`eval-run-2026-09-11.txt`](eval-run-2026-09-11.txt).
 
 | # | Tags valid? | Tasks valid? | Fair split? | Shared-task logic correct? | Notes |
 |---|---|---|---|---|---|
-| 1 | | | | | |
-| 2 | | | | | |
-| 3 | | | | | |
-| 4 | | | | | |
-| 5 | | | | | |
-| 6 | | | | | |
-| 7 | | | | | |
-| 8 | | | | | |
-| 9 | | | | | |
-| 10 | | | | | |
-| 11 | | | | | |
-| 12 | | | | | |
+| 1 | Yes (10) | Yes | Yes (5.0h spread) | No shared tasks generated | 3 members, evenly loaded |
+| 2 | Yes (10) | Yes | Yes (3.0h spread) | N/A | |
+| 3 | Yes (10) | Yes | Moderate (15.0h spread) | No shared tasks generated | 4 members, some imbalance |
+| 4 | Yes (10) | Yes | No (23.8h spread) | Yes — largest task shared across 2 members | Skill-fit weighted over hour balance |
+| 5 | Yes (10) | Yes | Yes (4.0h spread) | N/A | |
+| 6 | Yes (10) | Yes | Moderate (14.3h spread) | Yes | 5-member group, 2 members underloaded |
+| 7 | Yes (10) | Yes | Yes (2.0h spread) | N/A | Tightest split observed |
+| 8 | Yes (9) | Yes | N/A (1 member) | N/A | Single-member group, all tasks to Marwan |
+| 9 | Yes (10) | Yes | Yes (4.7h spread) | N/A | |
+| 10 | Yes (10) | Yes | Moderate (11.2h spread) | Yes | 6-member group with 3 no-strong-suit members |
+| 11 | Yes (10) | Yes | Yes (5.0h spread) | N/A | |
+| 12 | Yes (10) | Yes | No (25.3h spread) | Yes | Widest spread — 15 tasks across 4 members, largest project |

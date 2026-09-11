@@ -67,7 +67,7 @@ GroupMate does not use a fixed external dataset or corpus — inputs are provide
 | Provider | OpenAI |
 | Why considered | Required by the challenge; strong structured-output (JSON mode) support, which both AI calls depend on. |
 | Prompting approach | System + user message pattern, `response_format={"type": "json_object"}` to force valid JSON, with a manual retry (`_call_openai_json`, up to 2 retries) if a response fails to parse. |
-| Quality notes | Live-tested on 2026-09-09 with a real key: `generate_tags()` returned 10 specific, relevant tags (e.g. "payment integration", "push notifications") for a bill-splitting app description on the first call, no retry needed. `ai_distribute_tasks()` split a 6-task project evenly across 2 members (3 tasks / ~30h each) with names matching exactly. Full `scripts/run_eval.py` (12-sample set) not yet run — see Day 4 testing notes below. |
+| Quality notes | Live-tested on 2026-09-09, then the full 12-sample benchmark run on 2026-09-11 (`scripts/run_eval.py`, results in [`GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf)): 12/12 samples produced valid tags and 0 name-matching failures. Fairness (hour spread) was tight for simple single-deliverable projects (2.0-5.0h) but widened for larger, role-specialized projects (up to 25.3h), suggesting the model weighs skill-fit over strict hour-balance — documented as a tuning opportunity, not fixed within the challenge window. |
 | Latency notes | Each `gpt-4o` call (tag generation, task distribution, and the Day 4 "Ask AI" assistant) returns in roughly 2-4 seconds in manual testing — acceptable for this app's turn-based (not real-time chat) usage pattern. |
 | Cost notes | Low at demo scale — one tag-generation call and one distribution call per group, plus occasional Ask AI calls; a few cents total across all manual testing so far. |
 | Decision | `gpt-4o` via OpenAI API, JSON mode for structured calls, plain text for the Day 4 assistant, as required by the challenge. |
@@ -135,7 +135,7 @@ Model-building path: Not applicable — GroupMate follows the LLM/API Integratio
 - ☑ Core logic implemented (`generate_tags()`, `ai_distribute_tasks()`, `distribute_tasks()` in `app.py`)
 - ☑ Data ingestion / API integration expanded beyond hello world (full Supabase CRUD across groups/members/tasks)
 - ☑ 10-20 test questions/examples drafted (`docs/test-project-descriptions.md` — 12 samples spanning software, research, creative, and event-planning projects, with group sizes from 1 to 6)
-- ☑ First measurable baseline created (single-sample live test: 10/10 valid tags, 6/6 tasks correctly matched and evenly split — full 12-sample `scripts/run_eval.py` run still pending)
+- ☑ First measurable baseline created and extended to the full 12-sample benchmark (see Day 7)
 - ☑ README updated with run instructions
 
 **Artifacts / notes**
@@ -144,7 +144,7 @@ Model-building path: Not applicable — GroupMate follows the LLM/API Integratio
 |---|---|
 | What is the "brain" of your app | Sequential OpenAI API calls: one generates project-specific skill tags from the project description, a second distributes tasks fairly across members by matching skill tags to tasks while balancing overall workload (including logic for shared tasks), and (added Day 4) a third answers free-form teamwork questions using the project as context. |
 | Link to key code | [`app.py`](../app.py) — `generate_tags()`, `ai_distribute_tasks()`, `distribute_tasks()`, `ask_ai()` |
-| Baseline results | Live single-run test (2026-09-09): tag generation 10/10 valid and relevant; task distribution 6/6 tasks assigned with names matching exactly and hours split evenly (3/3 tasks, ~30h each) across 2 members. Full 12-sample benchmark not yet run. |
+| Baseline results | Live single-run test (2026-09-09), extended to the full 12-sample benchmark on 2026-09-11: 12/12 valid tag sets, 0/12 name-matching failures, average hour spread 10.3h (min 2.0h, max 25.3h) — see [`GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf) for the full breakdown. |
 | What to improve next | Run the full eval set for a larger sample size, tune the falling-behind threshold (`FALLING_BEHIND_THRESHOLD = 0.2`) against realistic usage patterns |
 
 **Decisions made today (why)**
@@ -276,26 +276,36 @@ GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **
 ## Day 7 — Final Review & Deployment
 
 **Checklist**
+- ☑ GitHub repository made public and tested
+- ☑ Full evaluation dataset run against live APIs, results documented
+- ☑ Embedding/vector-based context handling explored (file-search RAG, added Day 6, exercised again here)
+- ☑ Explainer video script prepared
 - ☐ Deployment target chosen and deployed — Hugging Face Spaces (Gradio SDK) chosen; not yet deployed
-- ☐ Environment variables set in deployment platform
-- ☐ Smoke tests run on deployed version
-- ☐ Performance checked (latency/cost)
-- ☐ Submission package checklist started
+
+**Prompt engineering & embeddings (LLM/API path ask)**
+- The three AI prompts (tag generation, task distribution, Ask AI) were already refined across Days 4 and 6; no further changes were needed today given the 12/12 valid-output result on the full benchmark (below).
+- Embedding techniques for context management — specifically named in today's checkpoint — were already built on Day 6: uploaded-file content is chunked, embedded (`text-embedding-3-small`), and retrieved by cosine similarity to ground Ask AI's answers, rather than the model relying on an unbounded conversation history.
+
+**Full evaluation run**
+- Ran the complete 12-sample benchmark live (`python scripts/run_eval.py`) on 2026-09-11: 12/12 samples produced valid tag JSON, 0/12 had a name-matching failure. Average hour spread across multi-member samples was 10.3h (min 2.0h on a 3-person charity-event project, max 25.3h on a 4-person podcast project with 15 generated tasks).
+- Finding: fairness holds tightly for simple, single-deliverable projects but widens for larger, role-specialized ones — the model appears to weigh skill-tag fit more heavily than strict hour-balancing. Full breakdown, methodology, and analysis: [`docs/GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf); raw run output: [`docs/eval-run-2026-09-11.txt`](eval-run-2026-09-11.txt); per-sample log: [`docs/test-project-descriptions.md`](test-project-descriptions.md).
 
 **Artifacts / notes**
 
 | Field | Value |
 |---|---|
-| Deployment platform | Hugging Face Spaces (Gradio SDK) |
+| Deployment platform | Hugging Face Spaces (Gradio SDK) — chosen, not yet deployed |
 | Deployment URL | Pending |
-| Smoke test results | Pending |
+| GitHub repository | https://github.com/ranasalahe/GroupMate — public |
+| Evaluation results | [`GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf) |
+| Explainer video | Script prepared; recording is a manual step (screen + voice), not something generated automatically |
 | Fallback plan if deployment breaks | Present the working local version via screen recording/demo video if the live Space has issues. |
 
 **Decisions made today (why)**
-- Not yet reached — deployment requires logging into the user's Hugging Face account, which is done by the user directly rather than by an assistant (same boundary as the GitHub push in Day 2: repo/Space creation happens in the user's own authenticated session).
+- Prioritized finishing the evaluation benchmark and making the repo public (both directly required deliverables) over deployment, since Hugging Face Space creation needs the user's own authenticated session — same boundary as the GitHub repo/Space creation pattern from earlier days.
 
 **Blockers / help needed**
-- Needs the user to create the Hugging Face Space (`README`/`app.py`/`requirements.txt` are already Spaces-compatible) and add `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY` as Space secrets.
+- Needs the user to create the Hugging Face Space (`README`/`app.py`/`requirements.txt` are already Spaces-compatible), add `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY` as Space secrets, and record the explainer video from the prepared script.
 
 ---
 
