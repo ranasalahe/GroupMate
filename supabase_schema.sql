@@ -9,6 +9,7 @@ create table if not exists groups (
     description text not null,
     deadline timestamptz not null,
     tags jsonb not null default '[]',
+    admin_name text,
     created_at timestamptz not null default now()
 );
 
@@ -79,6 +80,19 @@ create table if not exists file_chunks (
     created_at timestamptz not null default now()
 );
 
+-- A member's request to remove another member; only the group's admin_name
+-- can approve or deny it (checked in the app, not enforced by RLS here).
+create table if not exists member_removal_requests (
+    id uuid primary key default gen_random_uuid(),
+    group_id uuid not null references groups(id) on delete cascade,
+    target_member_name text not null,
+    requested_by text not null,
+    reason text,
+    status text not null default 'open',
+    created_at timestamptz not null default now(),
+    resolved_at timestamptz
+);
+
 create index if not exists idx_members_group_id on members(group_id);
 create index if not exists idx_tasks_group_id on tasks(group_id);
 create index if not exists idx_tasks_assigned_to on tasks(assigned_to);
@@ -86,6 +100,7 @@ create index if not exists idx_files_group_id on files(group_id);
 create index if not exists idx_messages_group_id on messages(group_id);
 create index if not exists idx_help_requests_group_id on help_requests(group_id);
 create index if not exists idx_file_chunks_group_id on file_chunks(group_id);
+create index if not exists idx_member_removal_requests_group_id on member_removal_requests(group_id);
 
 -- Demo-stage RLS: open policies so the Gradio app (using the anon/service key)
 -- can read and write freely. Tighten before any real deployment beyond the
@@ -97,6 +112,7 @@ alter table files enable row level security;
 alter table messages enable row level security;
 alter table help_requests enable row level security;
 alter table file_chunks enable row level security;
+alter table member_removal_requests enable row level security;
 
 create policy "groups_all" on groups for all using (true) with check (true);
 create policy "members_all" on members for all using (true) with check (true);
@@ -105,6 +121,7 @@ create policy "files_all" on files for all using (true) with check (true);
 create policy "messages_all" on messages for all using (true) with check (true);
 create policy "help_requests_all" on help_requests for all using (true) with check (true);
 create policy "file_chunks_all" on file_chunks for all using (true) with check (true);
+create policy "member_removal_requests_all" on member_removal_requests for all using (true) with check (true);
 
 -- Storage bucket for uploaded work files. Public so download links work
 -- without extra signing logic; same open-access tradeoff as the table

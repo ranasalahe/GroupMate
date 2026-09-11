@@ -181,7 +181,8 @@ def _generate_qr_html(url: str) -> str:
     return (
         '<div style="text-align:center;">'
         f'<img src="{data_uri}" width="160" height="160" '
-        'style="border:2px solid #8B6F47;border-radius:10px;" alt="Join QR code"/>'
+        'style="border:2px solid #8B6F47;border-radius:10px;background:#FFFFFF;padding:6px;" '
+        'alt="Join QR code"/>'
         "</div>"
     )
 
@@ -435,8 +436,8 @@ def _get_dashboard(group_id: str):
             '<span title="May need a hand" style="font-size:1.1rem;">🚩</span>' if is_behind else ""
         )
         member_cards.append(
-            '<div style="display:flex;align-items:center;gap:10px;background:#FCF8EF;'
-            "border:2px solid #8B6F47;border-radius:14px;padding:10px 16px;min-width:170px;\">"
+            '<div class="gm-card" style="display:flex;align-items:center;gap:10px;'
+            'border-radius:14px;padding:10px 16px;min-width:170px;">'
             f'{_ring_svg(completion_fraction * 100, member["name"], size=76)}{flag}</div>'
         )
 
@@ -663,14 +664,14 @@ def _ring_svg(percent: float, label: str, size: int = 100) -> str:
     return f"""
     <div style="text-align:center;">
       <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
-        <circle cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke="#E6E1D6" stroke-width="9"/>
-        <circle cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke="#8B6F47" stroke-width="9"
+        <circle class="gm-ring-track" cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke-width="9"/>
+        <circle class="gm-ring-progress" cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke-width="9"
                 stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
                 stroke-linecap="round" transform="rotate(-90 {size / 2} {size / 2})"/>
-        <text x="50%" y="50%" text-anchor="middle" dy="0.35em" font-size="{size * 0.2}"
-              fill="#1A1A1A" font-family="sans-serif" font-weight="600">{percent}%</text>
+        <text class="gm-ring-text" x="50%" y="50%" text-anchor="middle" dy="0.35em" font-size="{size * 0.2}"
+              font-family="sans-serif" font-weight="600">{percent}%</text>
       </svg>
-      <div style="font-size:0.85rem;color:#57534A;margin-top:2px;">{label}</div>
+      <div class="gm-ring-label" style="font-size:0.85rem;margin-top:2px;">{label}</div>
     </div>
     """
 
@@ -746,16 +747,15 @@ def get_home_view(group_id: str, member_name: str):
 
 def _chat_bubbles_html(rows: list[dict], viewer_name: str) -> str:
     if not rows:
-        return "<p style='color:#57534A;'><em>No messages yet — say hi!</em></p>"
+        return "<p class='gm-subdued'><em>No messages yet — say hi!</em></p>"
     bubbles = []
     for r in rows:
         is_mine = r["sender_name"].strip().lower() == viewer_name.strip().lower()
         align = "flex-end" if is_mine else "flex-start"
-        bg = "#EAE0C7" if is_mine else "#FCF8EF"
+        bubble_class = "gm-bubble-mine" if is_mine else "gm-bubble-theirs"
         bubbles.append(
             f'<div style="display:flex;flex-direction:column;align-items:{align};margin:6px 0;">'
-            f'<div style="background:{bg};border:2px solid #8B6F47;border-radius:14px;'
-            f'padding:8px 14px;max-width:80%;">'
+            f'<div class="{bubble_class}" style="border-radius:14px;padding:8px 14px;max-width:80%;">'
             f'<div style="font-weight:700;font-size:0.8rem;">{r["sender_name"]}</div>'
             f'<div>{r["body"]}</div></div></div>'
         )
@@ -855,7 +855,7 @@ def get_private_chat(group_id: str, member_a: str, member_b: str):
         key=lambda r: r["created_at"],
     )
     if not thread:
-        return f"<p style='color:#57534A;'><em>No messages with {member_b} yet.</em></p>"
+        return f"<p class='gm-subdued'><em>No messages with {member_b} yet.</em></p>"
     return _chat_bubbles_html(thread, member_a)
 
 
@@ -925,6 +925,128 @@ def offer_help(group_id: str, requester_name: str, helper_name: str):
     except Exception as exc:
         return f"Could not update help request: {exc}"
     return f"Marked {requester_name}'s request as helped by {helper_name}. Thank you!"
+
+
+# ---------------------------------------------------------------------------
+# Membership management: admin-approved removal, leaving a group
+# ---------------------------------------------------------------------------
+
+def _get_group_admin(group_id: str) -> str:
+    try:
+        db = get_supabase()
+        row = db.table("groups").select("admin_name").eq("id", group_id.strip()).execute()
+        return (row.data[0].get("admin_name") or "") if row.data else ""
+    except Exception:
+        return ""
+
+
+def request_remove_member(group_id: str, requester_name: str, target_name: str, reason: str):
+    if not group_id.strip() or not requester_name.strip() or not target_name.strip():
+        return "Please choose a member to request removal for."
+    if target_name.strip().lower() == requester_name.strip().lower():
+        return "Use Leave Group in Settings if you want to remove yourself."
+    try:
+        db = get_supabase()
+        db.table("member_removal_requests").insert(
+            {
+                "group_id": group_id.strip(),
+                "target_member_name": target_name.strip(),
+                "requested_by": requester_name.strip(),
+                "reason": (reason or "").strip() or None,
+            }
+        ).execute()
+    except Exception as exc:
+        return f"Could not submit request: {exc}"
+    return f"Requested removal of '{target_name}'. Waiting on the group admin's approval."
+
+
+def list_removal_requests(group_id: str):
+    if not group_id.strip():
+        return "Please provide a Group ID."
+    try:
+        db = get_supabase()
+        rows = (
+            db.table("member_removal_requests")
+            .select("*")
+            .eq("group_id", group_id.strip())
+            .eq("status", "open")
+            .order("created_at")
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        return f"Could not load requests: {exc}"
+    if not rows:
+        return "_No pending removal requests._"
+    lines = ["| Member to remove | Requested by | Reason |", "|---|---|---|"]
+    lines += [f"| {r['target_member_name']} | {r['requested_by']} | {r.get('reason') or '—'} |" for r in rows]
+    return "\n".join(lines)
+
+
+def approve_removal_request(group_id: str, admin_name: str, target_name: str):
+    if not group_id.strip() or not admin_name.strip() or not target_name.strip():
+        return "Please provide the member's name."
+    try:
+        db = get_supabase()
+        actual_admin = _get_group_admin(group_id)
+        if not actual_admin or actual_admin.strip().lower() != admin_name.strip().lower():
+            return "Only the group admin can approve removal requests."
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id.strip())
+            .ilike("name", target_name.strip())
+            .execute()
+        )
+        if not member.data:
+            return f"No member named '{target_name}' found."
+        db.table("members").delete().eq("id", member.data[0]["id"]).execute()
+        db.table("member_removal_requests").update(
+            {"status": "approved", "resolved_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("group_id", group_id.strip()).eq("target_member_name", target_name.strip()).eq(
+            "status", "open"
+        ).execute()
+    except Exception as exc:
+        return f"Could not remove member: {exc}"
+    return f"Removed '{target_name}' from the group."
+
+
+def deny_removal_request(group_id: str, admin_name: str, target_name: str):
+    if not group_id.strip() or not admin_name.strip() or not target_name.strip():
+        return "Please provide the member's name."
+    try:
+        db = get_supabase()
+        actual_admin = _get_group_admin(group_id)
+        if not actual_admin or actual_admin.strip().lower() != admin_name.strip().lower():
+            return "Only the group admin can deny removal requests."
+        db.table("member_removal_requests").update(
+            {"status": "denied", "resolved_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("group_id", group_id.strip()).eq("target_member_name", target_name.strip()).eq(
+            "status", "open"
+        ).execute()
+    except Exception as exc:
+        return f"Could not update the request: {exc}"
+    return f"Denied the request to remove '{target_name}'."
+
+
+def leave_group(group_id: str, member_name: str):
+    if not group_id.strip() or not member_name.strip():
+        return "Please provide a Group ID and your name."
+    try:
+        db = get_supabase()
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id.strip())
+            .ilike("name", member_name.strip())
+            .execute()
+        )
+        if not member.data:
+            return f"No member named '{member_name}' found in this group."
+        db.table("members").delete().eq("id", member.data[0]["id"]).execute()
+    except Exception as exc:
+        return f"Could not leave the group: {exc}"
+    return "You've left the group."
 
 
 # ---------------------------------------------------------------------------
@@ -1003,74 +1125,76 @@ CREAM_THEME = gr.themes.Base(
     neutral_hue=gr.themes.colors.stone,
 ).set(
     body_background_fill="#F2EFE9",
-    body_background_fill_dark="#F2EFE9",
+    body_background_fill_dark="#1E1912",
     background_fill_primary="#F2EFE9",
-    background_fill_primary_dark="#F2EFE9",
+    background_fill_primary_dark="#1E1912",
     background_fill_secondary="#E6E1D6",
-    background_fill_secondary_dark="#E6E1D6",
+    background_fill_secondary_dark="#2A2419",
     block_background_fill="#FAFAF7",
-    block_background_fill_dark="#FAFAF7",
+    block_background_fill_dark="#2A2419",
     block_border_color="#8B6F47",
-    block_border_color_dark="#8B6F47",
+    block_border_color_dark="#B08F5A",
     block_label_background_fill="#E6E1D6",
-    block_label_background_fill_dark="#E6E1D6",
+    block_label_background_fill_dark="#3A3222",
     block_label_text_color="#1A1A1A",
-    block_label_text_color_dark="#1A1A1A",
+    block_label_text_color_dark="#F2EFE9",
     block_title_text_color="#1A1A1A",
-    block_title_text_color_dark="#1A1A1A",
+    block_title_text_color_dark="#F2EFE9",
     border_color_primary="#8B6F47",
-    border_color_primary_dark="#8B6F47",
+    border_color_primary_dark="#B08F5A",
     body_text_color="#1A1A1A",
-    body_text_color_dark="#1A1A1A",
+    body_text_color_dark="#F2EFE9",
     body_text_color_subdued="#57534A",
-    body_text_color_subdued_dark="#57534A",
+    body_text_color_subdued_dark="#C9C0AA",
     button_primary_background_fill="#D6D0C0",
     button_primary_background_fill_hover="#C4BDAA",
-    button_primary_background_fill_dark="#D6D0C0",
+    button_primary_background_fill_dark="#6B5636",
+    button_primary_background_fill_hover_dark="#7D6640",
     button_primary_text_color="#1A1A1A",
-    button_primary_text_color_dark="#1A1A1A",
+    button_primary_text_color_dark="#F2EFE9",
     button_secondary_background_fill="#E6E1D6",
     button_secondary_background_fill_hover="#D6D0C0",
-    button_secondary_background_fill_dark="#E6E1D6",
+    button_secondary_background_fill_dark="#3A3222",
+    button_secondary_background_fill_hover_dark="#4A4028",
     button_secondary_text_color="#1A1A1A",
-    button_secondary_text_color_dark="#1A1A1A",
+    button_secondary_text_color_dark="#F2EFE9",
     input_background_fill="#FAFAF7",
-    input_background_fill_dark="#FAFAF7",
+    input_background_fill_dark="#2A2419",
     input_border_color="#8B6F47",
-    input_border_color_dark="#8B6F47",
+    input_border_color_dark="#B08F5A",
     checkbox_background_color="#FAFAF7",
-    checkbox_background_color_dark="#FAFAF7",
+    checkbox_background_color_dark="#2A2419",
     checkbox_background_color_selected="#C4BDAA",
-    checkbox_background_color_selected_dark="#C4BDAA",
+    checkbox_background_color_selected_dark="#6B5636",
     checkbox_border_color="#8B6F47",
-    checkbox_border_color_dark="#8B6F47",
+    checkbox_border_color_dark="#B08F5A",
     checkbox_label_background_fill="#FAFAF7",
-    checkbox_label_background_fill_dark="#FAFAF7",
+    checkbox_label_background_fill_dark="#2A2419",
     checkbox_label_background_fill_selected="#E6E1D6",
-    checkbox_label_background_fill_selected_dark="#E6E1D6",
+    checkbox_label_background_fill_selected_dark="#3A3222",
     checkbox_label_text_color="#1A1A1A",
-    checkbox_label_text_color_dark="#1A1A1A",
+    checkbox_label_text_color_dark="#F2EFE9",
     checkbox_label_text_color_selected="#1A1A1A",
-    checkbox_label_text_color_selected_dark="#1A1A1A",
+    checkbox_label_text_color_selected_dark="#F2EFE9",
     slider_color="#C4BDAA",
-    slider_color_dark="#C4BDAA",
+    slider_color_dark="#B08F5A",
     table_even_background_fill="#FAFAF7",
-    table_even_background_fill_dark="#FAFAF7",
+    table_even_background_fill_dark="#2A2419",
     table_odd_background_fill="#E6E1D6",
-    table_odd_background_fill_dark="#E6E1D6",
+    table_odd_background_fill_dark="#241F16",
     table_border_color="#8B6F47",
-    table_border_color_dark="#8B6F47",
+    table_border_color_dark="#B08F5A",
     table_row_focus="#D6D0C0",
-    table_row_focus_dark="#D6D0C0",
+    table_row_focus_dark="#3A3222",
     color_accent="#C4BDAA",
     color_accent_soft="#E6E1D6",
-    color_accent_soft_dark="#E6E1D6",
+    color_accent_soft_dark="#3A3222",
     border_color_accent="#8B6F47",
-    border_color_accent_dark="#8B6F47",
+    border_color_accent_dark="#B08F5A",
     link_text_color="#1A1A1A",
-    link_text_color_dark="#1A1A1A",
+    link_text_color_dark="#F2EFE9",
     link_text_color_hover="#57534A",
-    link_text_color_hover_dark="#57534A",
+    link_text_color_hover_dark="#C9C0AA",
     block_radius="18px",
     block_label_radius="10px",
     block_label_right_radius="10px",
@@ -1092,6 +1216,14 @@ CREAM_THEME = gr.themes.Base(
     checkbox_border_width_dark="2px",
     panel_border_width="2px",
     panel_border_width_dark="2px",
+    button_cancel_background_fill="#C0453A",
+    button_cancel_background_fill_hover="#A83A30",
+    button_cancel_background_fill_dark="#8C332A",
+    button_cancel_background_fill_hover_dark="#A83A30",
+    button_cancel_text_color="#FFFFFF",
+    button_cancel_text_color_dark="#FFFFFF",
+    button_cancel_border_color="#8C332A",
+    button_cancel_border_color_dark="#C0453A",
 )
 
 RESPONSIVE_CSS = """
@@ -1114,6 +1246,70 @@ RESPONSIVE_CSS = """
     text-align: left !important;
     justify-content: flex-start !important;
 }
+
+/* Custom HTML pieces (rings, chat bubbles, member cards) use these classes
+   instead of inline colors so the light/dark toggle actually reaches them. */
+.gm-card {
+    background: #FCF8EF;
+    border: 2px solid #8B6F47;
+    color: #1A1A1A;
+}
+.gm-bubble-mine {
+    background: #EAE0C7;
+    border: 2px solid #8B6F47;
+    color: #1A1A1A;
+}
+.gm-bubble-theirs {
+    background: #FCF8EF;
+    border: 2px solid #8B6F47;
+    color: #1A1A1A;
+}
+.gm-subdued {
+    color: #57534A;
+}
+.gm-ring-track {
+    stroke: #E6E1D6;
+}
+.gm-ring-progress {
+    stroke: #8B6F47;
+}
+.gm-ring-text {
+    fill: #1A1A1A;
+}
+.gm-ring-label {
+    color: #57534A;
+}
+.gm-danger-btn {
+    color: #B03A2E !important;
+    border-color: #B03A2E !important;
+}
+
+body.dark .gm-card,
+body.dark .gm-bubble-theirs {
+    background: #2A2419;
+    border-color: #B08F5A;
+    color: #F2EFE9;
+}
+body.dark .gm-bubble-mine {
+    background: #3A3222;
+    border-color: #B08F5A;
+    color: #F2EFE9;
+}
+body.dark .gm-subdued {
+    color: #C9C0AA;
+}
+body.dark .gm-ring-track {
+    stroke: #3A3222;
+}
+body.dark .gm-ring-progress {
+    stroke: #B08F5A;
+}
+body.dark .gm-ring-text {
+    fill: #F2EFE9;
+}
+body.dark .gm-ring-label {
+    color: #C9C0AA;
+}
 """
 
 def create_group_ui(
@@ -1129,6 +1325,14 @@ def create_group_ui(
 
     if not group_id:
         return "", status, tags_md, "", ""
+
+    if admin_name.strip():
+        try:
+            get_supabase().table("groups").update({"admin_name": admin_name.strip()}).eq(
+                "id", group_id
+            ).execute()
+        except Exception:
+            pass  # non-critical: group still works, just without an identified admin
 
     for raw_name in [admin_name] + re.split(r"[,\n]", member_names_raw or ""):
         raw_name = raw_name.strip()
@@ -1344,7 +1548,42 @@ with gr.Blocks(title="GroupMate") as demo:
                         "Your Group ID and Name are shown at the top of the page and "
                         "apply across every section here."
                     )
+
+                    with gr.Group():
+                        gr.Markdown("### Display")
+                        theme_toggle = gr.Button("🌗 Toggle Light / Dark Mode", variant="secondary")
+
+                    with gr.Group():
+                        gr.Markdown("### Request Remove Member")
+                        gr.Markdown("Requests need the group admin's approval before anyone is removed.")
+                        rm_refresh = gr.Button("Show Members")
+                        rm_target = gr.Radio(choices=[], label="Member to remove")
+                        rm_reason = gr.Textbox(label="Reason (optional)")
+                        rm_submit = gr.Button("Request Removal", variant="primary")
+                        rm_status = gr.Markdown()
+
+                    with gr.Group():
+                        gr.Markdown("### Pending Removal Requests (Admin Only)")
+                        gr.Markdown("Only the member who created the group can approve or deny these.")
+                        rm_admin_refresh = gr.Button("Refresh Requests")
+                        rm_admin_table = gr.Markdown()
+                        rm_admin_target = gr.Textbox(label="Member name to approve/deny")
+                        with gr.Row(elem_classes="step-nav-row"):
+                            rm_approve = gr.Button("Approve & Remove", variant="primary")
+                            rm_deny = gr.Button("Deny", variant="secondary")
+                        rm_admin_status = gr.Markdown()
+
                     settings_restart = gr.Button("🔄 Start Over / Join a Different Group", variant="secondary")
+
+                    with gr.Group():
+                        gr.Markdown("### ⚠️ Danger Zone")
+                        leave_button = gr.Button("🚪 Leave Group", variant="stop")
+                        with gr.Column(visible=False) as leave_confirm_panel:
+                            gr.Markdown("**Are you sure you want to leave your group?**")
+                            with gr.Row(elem_classes="step-nav-row"):
+                                leave_yes = gr.Button("Yes, I'm sure", variant="stop")
+                                leave_no = gr.Button("No, stay in group", variant="secondary")
+                        leave_status = gr.Markdown()
 
         with gr.Group():
             gr.Markdown("### 💡 Ask AI")
@@ -1366,6 +1605,18 @@ with gr.Blocks(title="GroupMate") as demo:
     # --- Wiring: step content ------------------------------------------------
     demo.load(
         load_deep_link, inputs=None, outputs=[shared_group_id, step_welcome, step_members]
+    )
+    demo.load(
+        None,
+        js="""
+        () => {
+            try {
+                const saved = localStorage.getItem('groupmate_theme');
+                if (saved === 'dark') { document.body.classList.add('dark'); }
+                else if (saved === 'light') { document.body.classList.remove('dark'); }
+            } catch (e) {}
+        }
+        """,
     )
     cg_button.click(
         create_group_ui,
@@ -1418,6 +1669,41 @@ with gr.Blocks(title="GroupMate") as demo:
         offer_help, inputs=[shared_group_id, oh_requester, shared_name], outputs=oh_status
     )
     ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, ai_question], outputs=ai_answer)
+    theme_toggle.click(
+        None,
+        js="""
+        () => {
+            document.body.classList.toggle('dark');
+            try {
+                localStorage.setItem('groupmate_theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+            } catch (e) {}
+        }
+        """,
+    )
+    rm_refresh.click(list_other_members, inputs=[shared_group_id, shared_name], outputs=rm_target)
+    rm_submit.click(
+        request_remove_member,
+        inputs=[shared_group_id, shared_name, rm_target, rm_reason],
+        outputs=rm_status,
+    )
+    rm_admin_refresh.click(list_removal_requests, inputs=shared_group_id, outputs=rm_admin_table)
+    rm_approve.click(
+        approve_removal_request,
+        inputs=[shared_group_id, shared_name, rm_admin_target],
+        outputs=rm_admin_status,
+    )
+    rm_deny.click(
+        deny_removal_request,
+        inputs=[shared_group_id, shared_name, rm_admin_target],
+        outputs=rm_admin_status,
+    )
+    leave_button.click(lambda: gr.update(visible=True), outputs=leave_confirm_panel)
+    leave_no.click(lambda: gr.update(visible=False), outputs=leave_confirm_panel)
+    leave_yes.click(
+        leave_group, inputs=[shared_group_id, shared_name], outputs=leave_status
+    ).then(lambda: gr.update(visible=False), outputs=leave_confirm_panel).then(
+        _advance, outputs=[step_shell, step_welcome]
+    )
 
     # --- Wiring: step navigation ------------------------------------------------
     welcome_start.click(_advance, outputs=[step_welcome, step_create])
