@@ -6,8 +6,8 @@
 
 | Field | Value |
 |---|---|
-| Participant Name | Ranoon |
-| Email | ranasalaheldin2006@gmail.com |
+| Participant Name | Rana Hamad |
+| Email | Rana.hamad1@outlook.com |
 | Timezone | GST (Dubai) |
 | Start Date | 2026-09-06 |
 | Path | ☑ LLM/API Integration |
