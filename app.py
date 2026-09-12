@@ -1318,6 +1318,24 @@ body.dark .gradio-container .form {
 .gradio-container button:active {
     transform: translateY(0) scale(0.97);
 }
+.gradio-container footer {
+    display: none !important;
+}
+.gm-theme-toggle {
+    position: fixed !important;
+    top: 14px;
+    right: 18px;
+    z-index: 1000;
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    font-size: 20px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+}
 body.dark .gradio-container button.primary {
     background: linear-gradient(180deg, #7D6640 0%, #6B5636 100%) !important;
 }
@@ -1656,6 +1674,10 @@ with gr.Blocks(title="GroupMate") as demo:
     shared_group_id = gr.Textbox(visible=False)
     shared_name = gr.Textbox(visible=False)
 
+    # Fixed-position toggle, visible on every screen via CSS (position: fixed),
+    # not just from within Settings.
+    global_theme_toggle = gr.Button("🌗", elem_classes="gm-theme-toggle", variant="secondary")
+
     # --- Step: Welcome ------------------------------------------------
     with gr.Column(visible=True, elem_classes=["welcome-screen", "gm-fade"]) as step_welcome:
         gr.Markdown("## Welcome to GroupMate", elem_classes="gm-welcome-title")
@@ -1859,7 +1881,7 @@ with gr.Blocks(title="GroupMate") as demo:
 
                     with gr.Group():
                         gr.Markdown("### Display")
-                        theme_toggle = gr.Button("🌗 Toggle Light / Dark Mode", variant="secondary")
+                        gr.Markdown("Use the 🌗 toggle in the top-right corner of any screen to switch light/dark mode.")
 
                     with gr.Group():
                         gr.Markdown("### Request Remove Member")
@@ -1988,7 +2010,7 @@ with gr.Blocks(title="GroupMate") as demo:
     oh_resolve.click(
         offer_help, inputs=[shared_group_id, oh_requester, shared_name], outputs=oh_status
     )
-    theme_toggle.click(
+    global_theme_toggle.click(
         None,
         js="""
         () => {
