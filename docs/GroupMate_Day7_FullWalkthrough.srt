@@ -1,0 +1,76 @@
+1
+00:00:00,000 --> 00:00:03,500
+One walkthrough, start to finish — the real, running app.
+
+2
+00:00:03,500 --> 00:00:07,000
+Someone on the team starts by creating the project.
+
+3
+00:00:07,000 --> 00:00:11,500
+Name, group, and teammates, comma-separated, no separate invite step.
+
+4
+00:00:11,500 --> 00:00:16,000
+Describe the project in plain English, that's all the AI needs.
+
+5
+00:00:16,000 --> 00:00:21,500
+Specific to this project, not generic tags like teamwork or communication.
+
+6
+00:00:21,500 --> 00:00:25,500
+A real join link and QR code, ready to send to the team.
+
+7
+00:00:25,500 --> 00:00:30,500
+Meanwhile, a teammate joins with that same link, paste it, type their name, done.
+
+8
+00:00:30,500 --> 00:00:35,500
+Once every member submits, tasks are distributed automatically, by skill fit and balanced workload.
+
+9
+00:00:35,500 --> 00:00:40,000
+The project is live: tasks assigned, deadline tracked, dashboard ready for everyone.
+
+10
+00:00:40,000 --> 00:00:45,000
+Falling more than 20% behind the group's pace flags a member automatically, the nudge.
+
+11
+00:00:45,000 --> 00:00:50,500
+This is the falling-behind flag in action, automatic, visible to the whole team, no one has to call it out.
+
+12
+00:00:50,500 --> 00:00:54,500
+Everyone in the group shares one live chat feed.
+
+13
+00:00:54,500 --> 00:00:59,000
+One-on-one messages stay separate from the group feed.
+
+14
+00:00:59,000 --> 00:01:03,500
+Files upload straight into the group's shared library, tagged by who uploaded them.
+
+15
+00:01:03,500 --> 00:01:09,000
+The assistant retrieves the most relevant chunks from your uploaded files and cites the source, grounded answers, not guesses.
+
+16
+00:01:09,000 --> 00:01:13,500
+A quick, no-shame way to flag you're stuck, it shows up for teammates on Offer Help.
+
+17
+00:01:13,500 --> 00:01:18,000
+Anyone on the team can step in, open requests are visible to everyone, not just the admin.
+
+18
+00:01:18,000 --> 00:01:23,500
+Dark mode, admin-approved member removal, and a confirmed Leave Group, nothing destructive happens by accident.
+
+19
+00:01:23,500 --> 00:01:27,500
+Built with Gradio, Supabase, and the OpenAI API.
+
