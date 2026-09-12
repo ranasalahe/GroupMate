@@ -93,6 +93,17 @@ create table if not exists member_removal_requests (
     resolved_at timestamptz
 );
 
+-- Lightweight security/activity log: group joins, detected prompt-injection
+-- attempts in uploaded files, and unhandled errors from AI/DB calls. Read by
+-- a periodic check, not the live UI.
+create table if not exists security_events (
+    id uuid primary key default gen_random_uuid(),
+    event_type text not null,
+    group_id uuid references groups(id) on delete cascade,
+    detail text,
+    created_at timestamptz not null default now()
+);
+
 create index if not exists idx_members_group_id on members(group_id);
 create index if not exists idx_tasks_group_id on tasks(group_id);
 create index if not exists idx_tasks_assigned_to on tasks(assigned_to);
@@ -101,6 +112,8 @@ create index if not exists idx_messages_group_id on messages(group_id);
 create index if not exists idx_help_requests_group_id on help_requests(group_id);
 create index if not exists idx_file_chunks_group_id on file_chunks(group_id);
 create index if not exists idx_member_removal_requests_group_id on member_removal_requests(group_id);
+create index if not exists idx_security_events_created_at on security_events(created_at);
+create index if not exists idx_security_events_group_id on security_events(group_id);
 
 -- Demo-stage RLS: open policies so the Gradio app (using the anon/service key)
 -- can read and write freely. Tighten before any real deployment beyond the
@@ -113,6 +126,7 @@ alter table messages enable row level security;
 alter table help_requests enable row level security;
 alter table file_chunks enable row level security;
 alter table member_removal_requests enable row level security;
+alter table security_events enable row level security;
 
 create policy "groups_all" on groups for all using (true) with check (true);
 create policy "members_all" on members for all using (true) with check (true);
@@ -122,6 +136,7 @@ create policy "messages_all" on messages for all using (true) with check (true);
 create policy "help_requests_all" on help_requests for all using (true) with check (true);
 create policy "file_chunks_all" on file_chunks for all using (true) with check (true);
 create policy "member_removal_requests_all" on member_removal_requests for all using (true) with check (true);
+create policy "security_events_all" on security_events for all using (true) with check (true);
 
 -- Storage bucket for uploaded work files. Public so download links work
 -- without extra signing logic; same open-access tradeoff as the table
