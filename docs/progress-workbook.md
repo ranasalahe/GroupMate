@@ -17,8 +17,9 @@
 | Demo / App URL | N/A — Hugging Face requires a paid PRO plan for Gradio apps; running locally at `localhost:7860` (see Day 7) |
 
 Quick links:
-- ☑ GitHub repo (private link above)
-- ☐ Deployment link (Hugging Face) — blocked, see Day 7
+- ☑ GitHub repo (public — see Day 7)
+- ☐ Deployment link (Render.com) — pivoted from Hugging Face (PRO-blocked), deployment in progress, see Day 7
+- ☑ Day 7 explainer video — [`GroupMate_Day7_Explainer.mp4`](GroupMate_Day7_Explainer.mp4)
 - ☐ Demo video link — pending Day 8
 - ☐ LinkedIn progress post URL — pending
 - ☐ Tweet/X progress post URL — N/A
@@ -279,13 +280,18 @@ GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **
 - ☑ GitHub repository made public and tested
 - ☑ Full evaluation dataset run against live APIs, results documented
 - ☑ Embedding/vector-based context handling explored (file-search RAG, added Day 6, exercised again here)
-- ☑ Explainer video script prepared
-- ☑ Deployment target evaluated — blocked by a real platform-side constraint (below); demoing locally instead
+- ☑ Explainer video recorded — [`GroupMate_Day7_Explainer.mp4`](GroupMate_Day7_Explainer.mp4) (silent, captioned — see note below)
+- ☑ Deployment target evaluated — Hugging Face blocked by a real platform-side constraint (below); pivoted to Render.com, in progress
 
-**Deployment attempt and why it's local-only for now**
-- Chose Hugging Face Spaces (Gradio SDK) as the deployment target and prepared everything for it: `app.py`/`requirements.txt` already Spaces-compatible, a Space-ready `README.md` with SDK metadata written ([`docs/space-readme.md`](space-readme.md)).
+**Deployment: Hugging Face blocked, pivoted to Render**
+- Chose Hugging Face Spaces (Gradio SDK) as the initial deployment target and prepared everything for it: `app.py`/`requirements.txt` already Spaces-compatible, a Space-ready `README.md` with SDK metadata written ([`docs/space-readme.md`](space-readme.md)).
 - On attempting to actually create the Space, discovered Hugging Face now requires a **PRO subscription ($9/month)** to host Gradio or Docker Spaces on a personal account — only static (HTML/JS, no Python backend) Spaces are free. This is a current platform policy, confirmed directly on the account's own Space-creation page and pricing page, not something scoped out of the original plan.
-- Decision: rather than making a paid subscription decision or reaching for a workaround with its own tradeoffs (a different free host with cold-start delays, or entering payment details), demoed locally (`python app.py` at `localhost:7860`) for the explainer video and this submission, and documented the real blocker transparently rather than silently skipping deployment.
+- Rather than pay for a plan just for this or reach for a workaround with its own tradeoffs, researched free alternatives and picked **Render.com** — a well-known, reputable host with a genuinely free Web Service tier (no card required), which supports Python natively. `server_name`/`server_port` in `app.py` were already made host-portable for this.
+- Status: the Render Web Service is configured (repo connected, build/start commands set, free instance selected, environment variable names in place) — final deployment is pending the account owner entering the actual secret values (`OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`) and clicking deploy, which only the account holder can do.
+
+**Explainer video format note**
+- Recorded as a silent, captioned walkthrough (on-screen text explaining each part) rather than voice narration — matches the original script's content (problem, architecture, the three AI integration points, guardrails, live walkthrough, evaluation results) condensed into subtitle-style captions over live-app and code-excerpt visuals. The original spoken-narration script ([`explainer-video-script.md`](explainer-video-script.md)) is kept for reference. An `.srt` caption file is included alongside the video for accessibility.
+- A second, shorter demo video focuses specifically on the teammate-facing side: joining an existing group via link/QR + name (no separate onboarding maze), Group Chat, Private Chats, and the falling-behind "nudge" (a member more than 20% behind the group's time-elapsed pace gets flagged in red on Group Progress, automatically). See [`GroupMate_Day7_Demo_JoinGroup.mp4`](GroupMate_Day7_Demo_JoinGroup.mp4) (`.srt` included).
 
 **Prompt engineering & embeddings (LLM/API path ask)**
 - The three AI prompts (tag generation, task distribution, Ask AI) were already refined across Days 4 and 6; no further changes were needed today given the 12/12 valid-output result on the full benchmark (below).
@@ -299,12 +305,13 @@ GroupMate integrates two external services: the **OpenAI API** (`gpt-4o`) and **
 
 | Field | Value |
 |---|---|
-| Deployment platform | Hugging Face Spaces (Gradio SDK) — attempted; blocked by the PRO requirement above |
-| Deployment URL | N/A — running locally at `localhost:7860` |
+| Deployment platform | Hugging Face Spaces (Gradio SDK) — attempted; blocked by the PRO requirement above. Pivoted to Render.com (free Web Service tier), configuration in progress |
+| Deployment URL | Pending — Render service configured, awaiting final secret values + deploy |
 | GitHub repository | https://github.com/ranasalahe/GroupMate — public |
 | Evaluation results | [`GroupMate_Evaluation_Results.pdf`](GroupMate_Evaluation_Results.pdf) |
-| Explainer video | Script prepared; recorded against the local app, not a deployed Space |
-| Fallback plan if deployment breaks | Already exercised: the working local version is the demo shown in the explainer/demo video. |
+| Explainer video | [`GroupMate_Day7_Explainer.mp4`](GroupMate_Day7_Explainer.mp4) — silent, captioned (`.srt` included); recorded against the local app |
+| Join/Chat/Nudge demo video | [`GroupMate_Day7_Demo_JoinGroup.mp4`](GroupMate_Day7_Demo_JoinGroup.mp4) — joining a group, Group Chat, Private Chats, and the falling-behind nudge |
+| Fallback plan if deployment breaks | Already exercised: the working local version is the demo shown in the explainer video. |
 
 **Decisions made today (why)**
 - Finished the evaluation benchmark and made the repo public (both directly required deliverables) before attempting deployment.

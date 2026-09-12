@@ -1,0 +1,68 @@
+1
+00:00:00,000 --> 00:00:03,500
+An AI-powered task distribution app for student group projects
+
+2
+00:00:03,500 --> 00:00:08,000
+Group projects usually split tasks by whoever speaks up first, not by who's actually good at what — and nobody notices someone falling behind until it's too late.
+
+3
+00:00:08,000 --> 00:00:12,500
+GroupMate uses AI to split tasks by skill and workload, and flags anyone falling behind.
+
+4
+00:00:12,500 --> 00:00:17,000
+No heavy framework — three services, cleanly separated.
+
+5
+00:00:17,000 --> 00:00:22,500
+gpt-4o reads the project description and returns project-specific skill tags in JSON mode.
+
+6
+00:00:22,500 --> 00:00:28,000
+A second AI call breaks the project into tasks, assigned by skill match and workload balance.
+
+7
+00:00:28,000 --> 00:00:34,000
+Every AI-reported hour estimate is clamped before it touches the database.
+
+8
+00:00:34,000 --> 00:00:39,500
+The assistant retrieves the most relevant uploaded-file chunks by cosine similarity.
+
+9
+00:00:39,500 --> 00:00:45,000
+Untrusted file content is clearly fenced in the prompt, and it was tested live against a real injection attempt.
+
+10
+00:00:45,000 --> 00:00:47,500
+Everything below is the real, running app, not a mockup.
+
+11
+00:00:47,500 --> 00:00:51,500
+One click to start a new project, or join one your teammate already created.
+
+12
+00:00:51,500 --> 00:00:56,000
+The project description generates real, project-specific skill tags, not generic ones.
+
+13
+00:00:56,000 --> 00:01:00,500
+Every member sees their own progress ring, schedule, and task checklist.
+
+14
+00:01:00,500 --> 00:01:05,000
+The dashboard flags anyone falling behind the group's pace, automatically.
+
+15
+00:01:05,000 --> 00:01:10,000
+Group chat, file sharing, and an always-available AI assistant round out the dashboard.
+
+16
+00:01:10,000 --> 00:01:15,500
+Benchmarked live against a 12-sample dataset of real project descriptions.
+
+17
+00:01:15,500 --> 00:01:20,000
+Real guardrails around the AI output, not just a thin wrapper around a chat call.
+

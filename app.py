@@ -378,19 +378,20 @@ def _distribute_tasks(group_id: str) -> str:
 
 def get_dashboard(group_id: str):
     if not group_id.strip():
-        return _ring_svg(0, "GroupTracker"), "<p>Please provide a Group ID.</p>", "—", ""
+        return _ring_svg(0, "GroupTracker"), "<p>Please provide a Group ID.</p>", _plain_circle_html("— remaining")
 
     try:
         return _get_dashboard(group_id)
     except Exception as exc:
-        return _ring_svg(0, "GroupTracker"), f"<p>Could not load dashboard: {exc}</p>", "—", ""
+        return _ring_svg(0, "GroupTracker"), f"<p>Could not load dashboard: {exc}</p>", _plain_circle_html("— remaining")
 
 
 def _get_dashboard(group_id: str):
+    empty_countdown = _plain_circle_html("— remaining")
     db = get_supabase()
     group = db.table("groups").select("name, deadline").eq("id", group_id.strip()).execute()
     if not group.data:
-        return _ring_svg(0, "GroupTracker"), "<p>No group found with that ID.</p>", "—", ""
+        return _ring_svg(0, "GroupTracker"), "<p>No group found with that ID.</p>", empty_countdown
 
     deadline = date_parser.parse(group.data[0]["deadline"])
     now = datetime.now(timezone.utc)
@@ -399,12 +400,13 @@ def _get_dashboard(group_id: str):
         countdown = f"{remaining.days}d {remaining.seconds // 3600}h remaining"
     else:
         countdown = "Deadline has passed"
+    countdown_circle = _plain_circle_html(countdown)
 
     members = db.table("members").select("id, name").eq("group_id", group_id.strip()).execute().data
     tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
 
     if not tasks:
-        return _ring_svg(0, "GroupTracker"), "<p>No tasks yet — waiting on task distribution.</p>", countdown, ""
+        return _ring_svg(0, "GroupTracker"), "<p>No tasks yet — waiting on task distribution.</p>", countdown_circle
 
     created_at = date_parser.parse(
         db.table("groups").select("created_at").eq("id", group_id.strip()).execute().data[0]["created_at"]
@@ -414,10 +416,9 @@ def _get_dashboard(group_id: str):
         min(max((now - created_at).total_seconds() / total_span, 0), 1) if total_span > 0 else 1
     )
 
-    member_cards = []
+    member_rows = []
     total_tasks = 0
     total_done = 0
-    behind_members = []
     for member in members:
         member_tasks = [
             t
@@ -430,26 +431,22 @@ def _get_dashboard(group_id: str):
         total_done += done
         completion_fraction = (done / count) if count else 1.0
         is_behind = (elapsed_fraction - completion_fraction) > FALLING_BEHIND_THRESHOLD
-        if is_behind:
-            behind_members.append(member["name"])
-        flag = (
-            '<span title="May need a hand" style="font-size:1.1rem;">🚩</span>' if is_behind else ""
+        nudge_html = (
+            '<span style="margin-left:10px;">🚩 <strong>' + member["name"] + "</strong> needs a hand! "
+            '<span class="gm-subdued">Request support?</span></span>'
+            if is_behind
+            else ""
         )
-        member_cards.append(
-            '<div class="gm-card" style="display:flex;align-items:center;gap:10px;'
-            'border-radius:14px;padding:10px 16px;min-width:170px;">'
-            f'{_ring_svg(completion_fraction * 100, member["name"], size=76)}{flag}</div>'
+        member_rows.append(
+            '<div class="gm-card" style="display:flex;align-items:center;justify-content:space-between;'
+            'border-radius:14px;padding:10px 16px;margin-bottom:10px;">'
+            f'<div style="display:flex;align-items:center;"><strong>{member["name"]}</strong>{nudge_html}</div>'
+            f'{_ring_svg(completion_fraction * 100, "", size=56)}</div>'
         )
 
-    members_html = (
-        '<div style="display:flex;flex-wrap:wrap;gap:14px;">' + "".join(member_cards) + "</div>"
-    )
+    members_html = "".join(member_rows)
     group_ring = _ring_svg((total_done / total_tasks * 100) if total_tasks else 0, "GroupTracker", size=120)
-    nudge = "\n\n".join(
-        f"🚩 **{name}** may need a hand — visit **Offer Help** to reach out."
-        for name in behind_members
-    )
-    return group_ring, members_html, countdown, nudge
+    return group_ring, members_html, countdown_circle
 
 
 def save_task_updates(group_id: str, member_name: str, completed_task_ids: list[str]):
@@ -627,7 +624,7 @@ def upload_file(group_id: str, member_name: str, file_path: str | None, editable
 
 def list_files(group_id: str):
     if not group_id.strip():
-        return "Please provide a Group ID."
+        return "<p class='gm-subdued'>Please provide a Group ID.</p>"
 
     try:
         db = get_supabase()
@@ -639,17 +636,9 @@ def list_files(group_id: str):
             .execute()
             .data
         )
-        if not rows:
-            return "No files uploaded yet."
-
-        lines = ["| File | Uploaded by | Editable by others | Link |", "|---|---|---|---|"]
-        for r in rows:
-            url = db.storage.from_(FILES_BUCKET).get_public_url(r["storage_path"])
-            editable = "Yes" if r["editable"] else "No"
-            lines.append(f"| {r['file_name']} | {r['uploader_name']} | {editable} | [Download]({url}) |")
-        return "\n".join(lines)
+        return _file_cards_html(rows)
     except Exception as exc:
-        return f"Could not load files: {exc}"
+        return f"<p>Could not load files: {exc}</p>"
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +656,7 @@ def _ring_svg(percent: float, label: str, size: int = 100) -> str:
         <circle class="gm-ring-track" cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke-width="9"/>
         <circle class="gm-ring-progress" cx="{size / 2}" cy="{size / 2}" r="{radius}" fill="none" stroke-width="9"
                 stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
+                style="--gm-ring-circ:{circumference:.2f}; --gm-ring-target:{offset:.2f};"
                 stroke-linecap="round" transform="rotate(-90 {size / 2} {size / 2})"/>
         <text class="gm-ring-text" x="50%" y="50%" text-anchor="middle" dy="0.35em" font-size="{size * 0.2}"
               font-family="sans-serif" font-weight="600">{percent}%</text>
@@ -676,38 +666,87 @@ def _ring_svg(percent: float, label: str, size: int = 100) -> str:
     """
 
 
+def _plain_circle_html(text: str, size: int = 100) -> str:
+    """A plain bordered circle with centered text, no progress arc.
+
+    Used for the deadline countdown display, which the wireframe draws as
+    a plain circle (unlike the progress rings, which fill by percent).
+    """
+    parts = text.split(" ", 1)
+    line1, line2 = parts[0], (parts[1] if len(parts) > 1 else "")
+    return f"""
+    <div class="gm-plain-circle" style="width:{size}px;height:{size}px;">
+      <div style="font-size:{size * 0.2}px;font-weight:700;">{line1}</div>
+      <div style="font-size:{size * 0.13}px;">{line2}</div>
+    </div>
+    """
+
+
+def _task_grid_html(tasks: list[dict]) -> str:
+    """A simple grid of task-title cells for the Home 'Calendar/Schedule' box."""
+    if not tasks:
+        return "<p class='gm-subdued'><em>No tasks yet.</em></p>"
+    cells = "".join(
+        f'<div class="gm-card" style="border-radius:10px;padding:10px 12px;text-align:center;">'
+        f'{t["title"]}</div>'
+        for t in tasks
+    )
+    return f'<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">{cells}</div>'
+
+
+def _file_cards_html(rows: list[dict]) -> str:
+    """Uploader + filename cards for the File Upload page, per the wireframe."""
+    if not rows:
+        return "<p class='gm-subdued'><em>No files uploaded yet.</em></p>"
+    db = get_supabase()
+    cards = []
+    for r in rows:
+        url = db.storage.from_(FILES_BUCKET).get_public_url(r["storage_path"])
+        cards.append(
+            f'<a href="{url}" target="_blank" class="gm-card" style="display:block;border-radius:12px;'
+            f'padding:10px 14px;margin-bottom:8px;text-decoration:none;">'
+            f'<div class="gm-subdued" style="font-size:0.8rem;">{r["uploader_name"]}</div>'
+            f'<div style="font-weight:600;">{r["file_name"]}</div></a>'
+        )
+    return "".join(cards)
+
+
 # ---------------------------------------------------------------------------
 # Home (personal progress + tasks)
 # ---------------------------------------------------------------------------
 
 def get_home_view(group_id: str, member_name: str):
     empty_progress = _ring_svg(0, "My Progress")
-    empty_countdown = _ring_svg(0, "Time Left")
+    empty_countdown = _plain_circle_html("— remaining")
     empty_tasks = gr.CheckboxGroup(choices=[], value=[])
+    empty_grid = "<p class='gm-subdued'><em>No tasks yet.</em></p>"
+    name_heading = f"## {member_name.strip()}" if member_name.strip() else "## Your Name"
 
     if not group_id.strip() or not member_name.strip():
-        return empty_progress, empty_countdown, empty_tasks, "Please provide a Group ID and your name."
+        return (
+            empty_progress,
+            empty_countdown,
+            empty_tasks,
+            empty_grid,
+            "Please provide a Group ID and your name.",
+            name_heading,
+        )
 
     try:
         db = get_supabase()
         group = db.table("groups").select("deadline, created_at").eq("id", group_id.strip()).execute()
         if not group.data:
-            return empty_progress, empty_countdown, empty_tasks, "No group found with that ID."
+            return empty_progress, empty_countdown, empty_tasks, empty_grid, "No group found with that ID.", name_heading
 
         deadline = date_parser.parse(group.data[0]["deadline"])
-        created_at = date_parser.parse(group.data[0]["created_at"])
         now = datetime.now(timezone.utc)
-        total_span = (deadline - created_at).total_seconds()
-        elapsed_pct = (
-            min(max((now - created_at).total_seconds() / total_span, 0), 1) * 100 if total_span > 0 else 100
-        )
         remaining = deadline - now
         countdown_label = (
-            f"{remaining.days}d {remaining.seconds // 3600}h left"
+            f"{remaining.days}d {remaining.seconds // 3600}h remaining"
             if remaining.total_seconds() > 0
             else "Deadline passed"
         )
-        countdown_ring = _ring_svg(100 - elapsed_pct, countdown_label)
+        countdown_circle = _plain_circle_html(countdown_label)
 
         member = (
             db.table("members")
@@ -717,7 +756,14 @@ def get_home_view(group_id: str, member_name: str):
             .execute()
         )
         if not member.data:
-            return empty_progress, countdown_ring, empty_tasks, "No member found with that name in that group."
+            return (
+                empty_progress,
+                countdown_circle,
+                empty_tasks,
+                empty_grid,
+                "No member found with that name in that group.",
+                name_heading,
+            )
 
         member_id = member.data[0]["id"]
         tasks = db.table("tasks").select("*").eq("group_id", group_id.strip()).execute().data
@@ -727,6 +773,7 @@ def get_home_view(group_id: str, member_name: str):
         done = sum(1 for t in my_tasks if t["completed"])
         count = len(my_tasks)
         progress_ring = _ring_svg((done / count * 100) if count else 0, "My Progress")
+        task_grid = _task_grid_html(my_tasks)
 
         choices, completed = [], []
         for t in my_tasks:
@@ -736,9 +783,16 @@ def get_home_view(group_id: str, member_name: str):
                 completed.append(t["id"])
 
         status = f"{done}/{count} tasks done." if count else "No tasks assigned yet."
-        return progress_ring, countdown_ring, gr.CheckboxGroup(choices=choices, value=completed), status
+        return (
+            progress_ring,
+            countdown_circle,
+            gr.CheckboxGroup(choices=choices, value=completed),
+            task_grid,
+            status,
+            name_heading,
+        )
     except Exception as exc:
-        return empty_progress, empty_countdown, empty_tasks, f"Could not load: {exc}"
+        return empty_progress, empty_countdown, empty_tasks, empty_grid, f"Could not load: {exc}", name_heading
 
 
 # ---------------------------------------------------------------------------
@@ -1227,6 +1281,148 @@ CREAM_THEME = gr.themes.Base(
 )
 
 RESPONSIVE_CSS = """
+body, .gradio-container {
+    background: radial-gradient(circle at 18% -8%, #FBF8F1 0%, #F2EFE9 42%, #E9E2D2 100%) !important;
+}
+body.dark, body.dark .gradio-container {
+    background: radial-gradient(circle at 18% -8%, #2C2618 0%, #1E1912 50%, #16120C 100%) !important;
+}
+
+/* Depth: every Gradio component block and grouped panel gets a soft
+   elevation shadow instead of sitting flat on the page. */
+.gradio-container .block {
+    box-shadow: 0 1px 2px rgba(60, 45, 20, 0.05), 0 6px 16px rgba(60, 45, 20, 0.06) !important;
+}
+.gradio-container .form {
+    box-shadow: 0 2px 6px rgba(60, 45, 20, 0.07), 0 12px 28px rgba(60, 45, 20, 0.09) !important;
+}
+body.dark .gradio-container .block {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px rgba(0, 0, 0, 0.28) !important;
+}
+body.dark .gradio-container .form {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.4) !important;
+}
+
+.gradio-container button.primary {
+    background: linear-gradient(180deg, #DCD6C6 0%, #C9C1AA 100%) !important;
+    box-shadow: 0 1px 2px rgba(60, 45, 20, 0.1), 0 3px 10px rgba(60, 45, 20, 0.12) !important;
+}
+.gradio-container button.secondary {
+    background: linear-gradient(180deg, #F0ECE1 0%, #E3DDCC 100%) !important;
+    box-shadow: 0 1px 2px rgba(60, 45, 20, 0.06), 0 2px 6px rgba(60, 45, 20, 0.07) !important;
+}
+.gradio-container button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(60, 45, 20, 0.16), 0 8px 20px rgba(60, 45, 20, 0.12) !important;
+}
+.gradio-container button:active {
+    transform: translateY(0) scale(0.97);
+}
+body.dark .gradio-container button.primary {
+    background: linear-gradient(180deg, #7D6640 0%, #6B5636 100%) !important;
+}
+body.dark .gradio-container button.secondary {
+    background: linear-gradient(180deg, #463D28 0%, #3A3222 100%) !important;
+}
+
+.gm-card, .gm-bubble-mine, .gm-bubble-theirs, .gm-plain-circle {
+    box-shadow: 0 2px 4px rgba(60, 45, 20, 0.06), 0 6px 18px rgba(60, 45, 20, 0.08) !important;
+}
+body.dark .gm-card, body.dark .gm-bubble-mine, body.dark .gm-bubble-theirs, body.dark .gm-plain-circle {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.32) !important;
+}
+.gm-ring-progress, .gm-ring-track {
+    filter: drop-shadow(0 2px 3px rgba(60, 45, 20, 0.15));
+}
+.sidebar-col button.gm-nav-active {
+    box-shadow: 0 2px 6px rgba(60, 45, 20, 0.22), inset 0 1px 0 rgba(255,255,255,0.15) !important;
+}
+.welcome-btn-row button {
+    box-shadow: 0 3px 8px rgba(60, 45, 20, 0.12), 0 8px 22px rgba(60, 45, 20, 0.1) !important;
+}
+.gradio-container, .gradio-container * {
+    font-family: 'Poppins', 'IBM Plex Sans', sans-serif;
+}
+h1, h2, h3 {
+    font-family: 'Playfair Display', Georgia, serif !important;
+    letter-spacing: 0.2px;
+}
+h1 {
+    font-size: 2.4rem !important;
+    color: #6B5636;
+}
+body.dark h1 {
+    color: #E6D9BE;
+}
+h2 {
+    font-weight: 700 !important;
+}
+h3 {
+    font-weight: 600 !important;
+    color: #8B6F47;
+}
+body.dark h3 {
+    color: #C9AE79;
+}
+.gm-subdued, .gm-ring-label {
+    font-family: 'Poppins', sans-serif !important;
+}
+@keyframes gm-fade-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.gm-fade {
+    animation: gm-fade-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.gradio-container button {
+    transition: background-color 0.15s ease, transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+.sidebar-col button {
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.12s ease !important;
+}
+@keyframes gm-ring-fill {
+    from { stroke-dashoffset: var(--gm-ring-circ); }
+    to { stroke-dashoffset: var(--gm-ring-target); }
+}
+.gm-ring-progress {
+    stroke-dashoffset: var(--gm-ring-circ);
+    animation: gm-ring-fill 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+    .gm-ring-progress { animation: none !important; }
+}
+.welcome-screen {
+    min-height: 60vh;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 20px;
+}
+.gm-welcome-title {
+    text-align: center;
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: break-word;
+}
+.gm-welcome-title h2 {
+    font-family: 'Playfair Display', Georgia, serif !important;
+    font-size: clamp(2.2rem, 7vw, 5rem) !important;
+    line-height: 1.15 !important;
+    margin-bottom: 0.2em !important;
+    white-space: normal !important;
+}
+.welcome-btn-row {
+    justify-content: center !important;
+    gap: 20px !important;
+}
+.welcome-btn-row button {
+    font-size: 1.3rem !important;
+    padding: 20px 34px !important;
+    height: auto !important;
+    min-width: 240px !important;
+}
 .gradio-container {
     max-width: 980px !important;
     margin: 0 auto !important;
@@ -1245,6 +1441,34 @@ RESPONSIVE_CSS = """
 .sidebar-col button {
     text-align: left !important;
     justify-content: flex-start !important;
+    font-size: 1.02rem !important;
+}
+.sidebar-col button.gm-nav-active {
+    background: #8B6F47 !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+}
+body.dark .sidebar-col button.gm-nav-active {
+    background: #B08F5A !important;
+    color: #1A1A1A !important;
+}
+.gm-side-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+}
+.gm-plain-circle {
+    border-radius: 50%;
+    border: 2px solid #8B6F47;
+    background: #FCF8EF;
+    color: #1A1A1A;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    margin: 0 auto;
 }
 
 /* Custom HTML pieces (rings, chat bubbles, member cards) use these classes
@@ -1310,6 +1534,11 @@ body.dark .gm-ring-text {
 body.dark .gm-ring-label {
     color: #C9C0AA;
 }
+body.dark .gm-plain-circle {
+    border-color: #B08F5A;
+    background: #2A2419;
+    color: #F2EFE9;
+}
 """
 
 def create_group_ui(
@@ -1344,23 +1573,43 @@ def create_group_ui(
     return group_id, status, tags_md, join_url, qr_html
 
 
-def join_group_ui(raw_group_id: str):
-    """Accept a pasted join URL or bare Group ID and validate it exists."""
+def join_group_ui(raw_group_id: str, member_name: str):
+    """Accept a pasted join URL/ID + name, validate both, and continue to Strong Suits."""
     group_id = _extract_group_id(raw_group_id)
     if not group_id:
-        return "", "Paste the group's join link or Group ID first.", gr.update(visible=True), gr.update(visible=False)
+        return "", "", "Paste the group's join link or Group ID first.", gr.update(visible=True), gr.update(visible=False)
+    if not member_name.strip():
+        return "", "", "Enter your name, exactly as your admin added you.", gr.update(visible=True), gr.update(visible=False)
     try:
         db = get_supabase()
         found = db.table("groups").select("id").eq("id", group_id).execute()
     except Exception as exc:
-        return "", f"Could not verify that group: {exc}", gr.update(visible=True), gr.update(visible=False)
+        return "", "", f"Could not verify that group: {exc}", gr.update(visible=True), gr.update(visible=False)
     if not found.data:
-        return "", "No group found with that link/ID.", gr.update(visible=True), gr.update(visible=False)
-    return group_id, "", gr.update(visible=False), gr.update(visible=True)
+        return "", "", "No group found with that link/ID.", gr.update(visible=True), gr.update(visible=False)
+    try:
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id)
+            .ilike("name", member_name.strip())
+            .execute()
+        )
+    except Exception as exc:
+        return "", "", f"Could not verify your name: {exc}", gr.update(visible=True), gr.update(visible=False)
+    if not member.data:
+        return (
+            "",
+            "",
+            f"'{member_name.strip()}' isn't in that group yet — ask your admin to add you first.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+        )
+    return group_id, member_name.strip(), "", gr.update(visible=False), gr.update(visible=True)
 
 
 def load_deep_link(request: gr.Request):
-    """Pre-fill the Group ID if the page was opened via a shared join link."""
+    """Pre-fill the join field and jump to the Join screen if opened via a shared link."""
     try:
         group_id = dict(request.query_params).get("group", "") if request else ""
     except Exception:
@@ -1375,76 +1624,97 @@ def _advance():
     return gr.update(visible=False), gr.update(visible=True)
 
 
-with gr.Blocks(title="GroupMate") as demo:
-    gr.Markdown("# GroupMate\nFair, AI-powered task distribution for group projects.")
+def get_group_name(group_id: str) -> str:
+    if group_id.strip():
+        try:
+            row = get_supabase().table("groups").select("name").eq("id", group_id.strip()).execute()
+            if row.data:
+                return f"## {row.data[0]['name']}"
+        except Exception:
+            pass
+    return "## Project"
 
-    with gr.Group():
-        shared_group_id = gr.Textbox(
-            label="Group ID",
-            placeholder="Paste your team's Group ID here if you're joining an existing group",
-            buttons=["copy"],
-        )
-        shared_name = gr.Textbox(
-            label="Your Name",
-            placeholder="Your name, exactly as added in Add Members",
-            info="Used for Strong Suits and My Tasks.",
-        )
+
+def get_ring_and_countdown(group_id: str):
+    """A lighter version of get_dashboard for side panels that only need the
+    GroupTracker ring and the deadline circle, not the member list."""
+    group_ring, _members_html, countdown_circle = get_dashboard(group_id)
+    return group_ring, countdown_circle
+
+
+with gr.Blocks(title="GroupMate") as demo:
+    gr.HTML(
+        '<link rel="preconnect" href="https://fonts.googleapis.com">'
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        '<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700'
+        '&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">',
+        visible=False,
+    )
+
+    # Session state — carried between screens, not shown as raw fields to the
+    # user (the wireframe never draws a persistent Group ID/Name box).
+    shared_group_id = gr.Textbox(visible=False)
+    shared_name = gr.Textbox(visible=False)
 
     # --- Step: Welcome ------------------------------------------------
-    with gr.Column(visible=True) as step_welcome:
-        gr.Markdown("## Welcome to GroupMate")
-        gr.Markdown("Fair, AI-powered task distribution for group projects.")
-        with gr.Row(elem_classes="step-nav-row"):
-            welcome_start = gr.Button("🚀 Start New Group Project", variant="primary")
-            welcome_join = gr.Button("🔗 Join Existing Group Project", variant="secondary")
+    with gr.Column(visible=True, elem_classes=["welcome-screen", "gm-fade"]) as step_welcome:
+        gr.Markdown("## Welcome to GroupMate", elem_classes="gm-welcome-title")
+        with gr.Row(elem_classes=["step-nav-row", "welcome-btn-row"]):
+            welcome_start = gr.Button("Start new group project", variant="primary")
+            welcome_join = gr.Button("Join existing group project", variant="secondary")
 
-    # --- Step: Create Group (Group Admin) ---------------------------------------------
-    with gr.Column(visible=False) as step_create:
-        gr.Markdown("## You're the Group Admin")
-        gr.Markdown("Fill out the details below. This generates skill tags and a link to share.")
-        cg_name = gr.Textbox(label="Project / Group Name")
-        cg_description = gr.Textbox(label="Project Description", lines=5)
-        cg_deadline = gr.Textbox(label="Deadline", placeholder="2026-09-20 18:00")
-        cg_members = gr.Textbox(
-            label="Group Members",
-            placeholder="One per line or comma-separated — you'll be added automatically too",
-            lines=2,
-        )
+    # --- Step: Create Group (Group Admin) ------------------------------
+    with gr.Column(visible=False, elem_classes="gm-fade") as step_create:
+        gr.Markdown("## You are the Group Admin")
+        gr.Markdown("Please fill out the details.")
+        with gr.Row():
+            with gr.Column():
+                cg_admin_name = gr.Textbox(label="Your Name")
+                cg_name = gr.Textbox(label="Group Name")
+                cg_members = gr.Textbox(
+                    label="Group Members",
+                    placeholder="Add teammates, one per line or comma-separated",
+                    info="+ add member — you'll be added automatically too.",
+                    lines=3,
+                )
+            with gr.Column():
+                cg_description = gr.Textbox(
+                    label="Project Description", lines=4, info="Used to generate skill tags."
+                )
+                cg_deadline = gr.Textbox(label="Project Deadline", placeholder="YYYY-MM-DD HH:MM")
+                with gr.Group():
+                    gr.Markdown("**Share to GroupMembers**")
+                    cg_join_url = gr.Textbox(
+                        label="", show_label=False, placeholder="Your join link appears here once created", interactive=False,
+                        buttons=["copy"],
+                    )
+                    cg_qr = gr.HTML()
         cg_button = gr.Button("Create Group", variant="primary")
         cg_status = gr.Markdown()
         cg_tags = gr.Markdown()
-        with gr.Group():
-            gr.Markdown("### Share with your group")
-            cg_join_url = gr.Textbox(label="Join Link", interactive=False, buttons=["copy"])
-            cg_qr = gr.HTML()
         with gr.Row(elem_classes="step-nav-row"):
             cg_back = gr.Button("← Back", variant="secondary")
-            cg_next = gr.Button("Continue to Add Members →", variant="primary")
+            cg_next = gr.Button("Continue to Strong Suits →", variant="primary")
 
     # --- Step: Join Existing Group ---------------------------------------------
-    with gr.Column(visible=False) as step_join:
-        gr.Markdown("## Join an Existing Group")
+    with gr.Column(visible=False, elem_classes="gm-fade") as step_join:
+        gr.Markdown("## Join a Group")
         jn_input = gr.Textbox(
-            label="Paste the group's join link or Group ID",
+            label="Paste group's URL",
             placeholder="https://.../?group=... or just the Group ID",
         )
+        gr.Markdown("<div style='text-align:center;' class='gm-subdued'>OR</div>")
+        gr.Markdown(
+            "📷 **Scan QR code** — open your phone's camera on the code your admin "
+            "shared, and it'll open GroupMate with your group already filled in."
+        )
+        jn_name = gr.Textbox(label="Your Name", info="Exactly as your admin added you.")
         jn_button = gr.Button("Join", variant="primary")
         jn_status = gr.Markdown()
         jn_back = gr.Button("← Back", variant="secondary")
 
-    # --- Step 2: Add Members ------------------------------------------------
-    with gr.Column(visible=False) as step_members:
-        gr.Markdown("## Add Members")
-        gr.Markdown("Add each teammate by name. Repeat for everyone in the group.")
-        am_name = gr.Textbox(label="New Member's Name")
-        am_button = gr.Button("Add Member", variant="primary")
-        am_status = gr.Markdown()
-        with gr.Row(elem_classes="step-nav-row"):
-            am_back = gr.Button("← Back", variant="secondary")
-            am_next = gr.Button("Continue to Strong Suits →", variant="primary")
-
-    # --- Step 3: Strong Suits ------------------------------------------------
-    with gr.Column(visible=False) as step_suits:
+    # --- Step: Strong Suits ------------------------------------------------
+    with gr.Column(visible=False, elem_classes="gm-fade") as step_suits:
         gr.Markdown("## Strong Suits")
         gr.Markdown(
             "Load the group's skill tags, then pick the ones that match your "
@@ -1456,14 +1726,14 @@ with gr.Blocks(title="GroupMate") as demo:
         ss_submit = gr.Button("Submit Strong Suits", variant="primary")
         ss_status = gr.Markdown()
         with gr.Row(elem_classes="step-nav-row"):
-            ss_back = gr.Button("← Back", variant="secondary")
+            ss_back = gr.Button("← Back to Start", variant="secondary")
             ss_next = gr.Button("Continue to Dashboard →", variant="primary")
 
-    # --- Step 4: Main Dashboard Shell ------------------------------------------------
-    with gr.Column(visible=False) as step_shell:
+    # --- Step: Main Dashboard Shell ------------------------------------------------
+    with gr.Column(visible=False, elem_classes="gm-fade") as step_shell:
         with gr.Row():
             with gr.Column(scale=1, min_width=170, elem_classes="sidebar-col"):
-                nav_home = gr.Button("🏠 Home", variant="secondary")
+                nav_home = gr.Button("🏠 Home", variant="secondary", elem_classes=["gm-nav-active"])
                 nav_progress = gr.Button("📊 Group Progress", variant="secondary")
                 nav_chat = gr.Button("💬 Group Chat", variant="secondary")
                 nav_files = gr.Button("📁 File Upload", variant="secondary")
@@ -1471,60 +1741,95 @@ with gr.Blocks(title="GroupMate") as demo:
                 nav_offer_help = gr.Button("🤝 Offer Help", variant="secondary")
                 nav_settings = gr.Button("⚙️ Settings", variant="secondary")
 
-            with gr.Column(scale=4):
+            with gr.Column(scale=5):
                 # --- Page: Home ---
-                with gr.Column(visible=True) as page_home:
-                    gr.Markdown("## Home")
-                    home_refresh = gr.Button("Refresh", variant="primary")
+                with gr.Column(visible=True, elem_classes="gm-fade") as page_home:
+                    home_name_heading = gr.Markdown("## Your Name")
                     with gr.Row():
                         home_progress_ring = gr.HTML()
                         home_countdown_ring = gr.HTML()
+                        home_refresh = gr.Button("🔄", variant="secondary", scale=0, min_width=48)
                     home_status = gr.Markdown()
-                    home_tasks = gr.CheckboxGroup(choices=[], label="My tasks")
-                    home_save = gr.Button("Save Task Updates", variant="primary")
-                    gr.Markdown("### Private Chat")
-                    home_dm_refresh = gr.Button("Show Teammates")
-                    home_dm_to = gr.Radio(choices=[], label="Message a teammate")
-                    home_dm_thread = gr.HTML()
-                    home_dm_load = gr.Button("Load Chat")
-                    home_dm_input = gr.Textbox(label="Message", placeholder="Type a message...")
-                    home_dm_send = gr.Button("Send", variant="primary")
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown("### 📅 Calendar / Schedule")
+                            home_task_grid = gr.HTML()
+                        with gr.Column():
+                            gr.Markdown("### Tasks")
+                            home_tasks = gr.CheckboxGroup(choices=[], label="", show_label=False)
+                            home_save = gr.Button("Save Task Updates", variant="primary")
+                    with gr.Row():
+                        with gr.Column(elem_classes="gm-card", min_width=200):
+                            gr.Markdown("### Private Chats")
+                            home_dm_refresh = gr.Button("Show Teammates")
+                            home_dm_to = gr.Radio(choices=[], label="", show_label=False)
+                            home_dm_thread = gr.HTML()
+                            home_dm_load = gr.Button("Load Chat")
+                            home_dm_input = gr.Textbox(label="", show_label=False, placeholder="Start typing here")
+                            home_dm_send = gr.Button("➤ Send", variant="primary")
+                        with gr.Column(elem_classes="gm-card", min_width=200):
+                            gr.Markdown("### 💡 Ask AI")
+                            home_ai_question = gr.Textbox(
+                                label="", show_label=False, placeholder="e.g. How do I help a teammate who's falling behind?"
+                            )
+                            home_ai_ask = gr.Button("Ask", variant="primary")
+                            home_ai_answer = gr.Markdown()
 
                 # --- Page: Group Progress ---
-                with gr.Column(visible=False) as page_progress:
-                    gr.Markdown("## Group Progress")
-                    gp_refresh = gr.Button("Refresh", variant="primary")
-                    gp_countdown = gr.Markdown()
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_progress:
+                    gp_name_heading = gr.Markdown("## Project")
                     with gr.Row():
-                        gp_members = gr.HTML()
-                        gp_progress = gr.HTML()
-                    gp_nudge = gr.Markdown()
+                        with gr.Column(scale=3):
+                            gp_refresh = gr.Button("🔄 Refresh", variant="secondary")
+                            gp_members = gr.HTML()
+                        with gr.Column(scale=1, elem_classes="gm-side-panel"):
+                            gp_countdown = gr.HTML()
+                            gp_progress = gr.HTML()
+                            gr.Markdown("### 💡 Ask AI")
+                            gp_ai_question = gr.Textbox(label="", show_label=False, placeholder="Ask about the group's progress...")
+                            gp_ai_ask = gr.Button("Ask", variant="primary")
+                            gp_ai_answer = gr.Markdown()
 
                 # --- Page: Group Chat ---
-                with gr.Column(visible=False) as page_chat:
-                    gr.Markdown("## Group Chat")
-                    gc_refresh = gr.Button("Refresh Chat", variant="primary")
-                    gc_feed = gr.HTML()
-                    gc_input = gr.Textbox(label="Message", placeholder="Type a message to the group...")
-                    gc_send = gr.Button("Send", variant="primary")
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_chat:
+                    gc_name_heading = gr.Markdown("## Project")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            gc_refresh = gr.Button("🔄 Refresh Chat", variant="secondary")
+                            gc_feed = gr.HTML()
+                            with gr.Row():
+                                gc_input = gr.Textbox(label="", show_label=False, placeholder="Start typing here", scale=4)
+                                gc_send = gr.Button("➤", variant="primary", scale=0, min_width=48)
+                        with gr.Column(scale=1, elem_classes="gm-side-panel"):
+                            gc_countdown = gr.HTML()
+                            gc_group_ring = gr.HTML()
+                            gr.Markdown("### 💡 Ask AI")
+                            gc_ai_question = gr.Textbox(label="", show_label=False, placeholder="Ask the assistant...")
+                            gc_ai_ask = gr.Button("Ask", variant="primary")
+                            gc_ai_answer = gr.Markdown()
 
                 # --- Page: File Upload ---
-                with gr.Column(visible=False) as page_files:
-                    gr.Markdown("## File Upload")
-                    gr.Markdown(
-                        "Upload your work so the group can find it in one place. Mark a "
-                        "file editable if teammates should be able to replace it with a "
-                        "newer version; otherwise only you can update it."
-                    )
-                    fl_file = gr.File(label="Choose a file to upload")
-                    fl_editable = gr.Checkbox(label="Allow other members to replace this file", value=False)
-                    fl_upload = gr.Button("Upload File", variant="primary")
-                    fl_upload_status = gr.Markdown()
-                    fl_refresh = gr.Button("Refresh File List")
-                    fl_table = gr.Markdown()
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_files:
+                    fl_name_heading = gr.Markdown("## Project")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            fl_refresh = gr.Button("🔄 Refresh", variant="secondary")
+                            fl_table = gr.HTML()
+                            gr.Markdown("### ⊕ Upload File")
+                            fl_file = gr.File(label="", show_label=False)
+                            fl_editable = gr.Checkbox(label="Allow other members to replace this file", value=False)
+                            fl_upload = gr.Button("Upload File", variant="primary")
+                            fl_upload_status = gr.Markdown()
+                        with gr.Column(scale=1, elem_classes="gm-side-panel"):
+                            fl_countdown = gr.HTML()
+                            fl_group_ring = gr.HTML()
+                            gr.Markdown("### 💡 Ask AI")
+                            fl_ai_question = gr.Textbox(label="", show_label=False, placeholder="Ask the assistant...")
+                            fl_ai_ask = gr.Button("Ask", variant="primary")
+                            fl_ai_answer = gr.Markdown()
 
                 # --- Page: Request Help ---
-                with gr.Column(visible=False) as page_request_help:
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_request_help:
                     gr.Markdown("## Request Help")
                     gr.Markdown("Let your teammates know you're stuck and could use a hand.")
                     rh_note = gr.Textbox(label="What do you need help with?", lines=3)
@@ -1532,22 +1837,25 @@ with gr.Blocks(title="GroupMate") as demo:
                     rh_status = gr.Markdown()
 
                 # --- Page: Offer Help ---
-                with gr.Column(visible=False) as page_offer_help:
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_offer_help:
                     gr.Markdown("## Offer Help")
                     gr.Markdown("See who's asked for help and let them know you've got it.")
-                    oh_refresh = gr.Button("Refresh Requests", variant="primary")
+                    oh_refresh = gr.Button("Refresh Requests", variant="secondary")
                     oh_table = gr.Markdown()
                     oh_requester = gr.Textbox(label="Requester's Name")
                     oh_resolve = gr.Button("Mark as Helped", variant="primary")
                     oh_status = gr.Markdown()
 
                 # --- Page: Settings ---
-                with gr.Column(visible=False) as page_settings:
+                with gr.Column(visible=False, elem_classes="gm-fade") as page_settings:
                     gr.Markdown("## Settings")
-                    gr.Markdown(
-                        "Your Group ID and Name are shown at the top of the page and "
-                        "apply across every section here."
-                    )
+
+                    with gr.Group():
+                        gr.Markdown("### Your Group")
+                        settings_group_id_display = gr.Textbox(
+                            label="Group ID", interactive=False, buttons=["copy"]
+                        )
+                        settings_name_display = gr.Textbox(label="Your Name", interactive=False)
 
                     with gr.Group():
                         gr.Markdown("### Display")
@@ -1578,33 +1886,30 @@ with gr.Blocks(title="GroupMate") as demo:
                     with gr.Group():
                         gr.Markdown("### ⚠️ Danger Zone")
                         leave_button = gr.Button("🚪 Leave Group", variant="stop")
-                        with gr.Column(visible=False) as leave_confirm_panel:
+                        with gr.Column(visible=False, elem_classes="gm-fade") as leave_confirm_panel:
                             gr.Markdown("**Are you sure you want to leave your group?**")
                             with gr.Row(elem_classes="step-nav-row"):
                                 leave_yes = gr.Button("Yes, I'm sure", variant="stop")
                                 leave_no = gr.Button("No, stay in group", variant="secondary")
                         leave_status = gr.Markdown()
 
-        with gr.Group():
-            gr.Markdown("### 💡 Ask AI")
-            ai_question = gr.Textbox(
-                label="Ask the assistant",
-                placeholder="e.g. How do I help a teammate who's falling behind?",
-            )
-            ai_ask = gr.Button("Ask", variant="primary")
-            ai_answer = gr.Markdown()
-
     PAGES = [page_home, page_progress, page_chat, page_files, page_request_help, page_offer_help, page_settings]
+    NAV_BUTTONS = [nav_home, nav_progress, nav_chat, nav_files, nav_request_help, nav_offer_help, nav_settings]
 
     def _nav_to(target_index: int):
         def _fn():
-            return [gr.update(visible=(i == target_index)) for i in range(len(PAGES))]
+            page_updates = [gr.update(visible=(i == target_index)) for i in range(len(PAGES))]
+            nav_updates = [
+                gr.update(elem_classes=["gm-nav-active"] if i == target_index else [])
+                for i in range(len(NAV_BUTTONS))
+            ]
+            return page_updates + nav_updates
 
         return _fn
 
     # --- Wiring: step content ------------------------------------------------
     demo.load(
-        load_deep_link, inputs=None, outputs=[shared_group_id, step_welcome, step_members]
+        load_deep_link, inputs=None, outputs=[jn_input, step_welcome, step_join]
     )
     demo.load(
         None,
@@ -1620,13 +1925,14 @@ with gr.Blocks(title="GroupMate") as demo:
     )
     cg_button.click(
         create_group_ui,
-        inputs=[cg_name, cg_description, cg_deadline, shared_name, cg_members],
+        inputs=[cg_name, cg_description, cg_deadline, cg_admin_name, cg_members],
         outputs=[shared_group_id, cg_status, cg_tags, cg_join_url, cg_qr],
-    )
+    ).then(lambda n: n.strip(), inputs=cg_admin_name, outputs=shared_name)
     jn_button.click(
-        join_group_ui, inputs=jn_input, outputs=[shared_group_id, jn_status, step_join, step_members]
+        join_group_ui,
+        inputs=[jn_input, jn_name],
+        outputs=[shared_group_id, shared_name, jn_status, step_join, step_suits],
     )
-    am_button.click(add_member, inputs=[shared_group_id, am_name], outputs=am_status)
     ss_load_button.click(
         load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status]
     )
@@ -1636,7 +1942,7 @@ with gr.Blocks(title="GroupMate") as demo:
     home_refresh.click(
         get_home_view,
         inputs=[shared_group_id, shared_name],
-        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_status],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
     )
     home_save.click(
         save_task_updates, inputs=[shared_group_id, shared_name, home_tasks], outputs=home_status
@@ -1650,25 +1956,32 @@ with gr.Blocks(title="GroupMate") as demo:
         inputs=[shared_group_id, shared_name, home_dm_to, home_dm_input],
         outputs=[home_dm_input, home_status],
     ).then(get_private_chat, inputs=[shared_group_id, shared_name, home_dm_to], outputs=home_dm_thread)
+    home_ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, home_ai_question], outputs=home_ai_answer)
     gp_refresh.click(
-        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_members, gp_countdown, gp_nudge]
-    )
-    gc_refresh.click(get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed)
+        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_members, gp_countdown]
+    ).then(get_group_name, inputs=shared_group_id, outputs=gp_name_heading)
+    gp_ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, gp_ai_question], outputs=gp_ai_answer)
+    gc_refresh.click(get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed).then(
+        get_ring_and_countdown, inputs=shared_group_id, outputs=[gc_group_ring, gc_countdown]
+    ).then(get_group_name, inputs=shared_group_id, outputs=gc_name_heading)
     gc_send.click(
         send_group_message, inputs=[shared_group_id, shared_name, gc_input], outputs=[gc_input, gc_feed]
     ).then(get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed)
+    gc_ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, gc_ai_question], outputs=gc_ai_answer)
     fl_upload.click(
         upload_file,
         inputs=[shared_group_id, shared_name, fl_file, fl_editable],
         outputs=fl_upload_status,
-    )
-    fl_refresh.click(list_files, inputs=shared_group_id, outputs=fl_table)
+    ).then(list_files, inputs=shared_group_id, outputs=fl_table)
+    fl_refresh.click(list_files, inputs=shared_group_id, outputs=fl_table).then(
+        get_ring_and_countdown, inputs=shared_group_id, outputs=[fl_group_ring, fl_countdown]
+    ).then(get_group_name, inputs=shared_group_id, outputs=fl_name_heading)
+    fl_ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, fl_ai_question], outputs=fl_ai_answer)
     rh_submit.click(request_help, inputs=[shared_group_id, shared_name, rh_note], outputs=rh_status)
     oh_refresh.click(list_open_help_requests, inputs=shared_group_id, outputs=oh_table)
     oh_resolve.click(
         offer_help, inputs=[shared_group_id, oh_requester, shared_name], outputs=oh_status
     )
-    ai_ask.click(ask_ai, inputs=[shared_group_id, shared_name, ai_question], outputs=ai_answer)
     theme_toggle.click(
         None,
         js="""
@@ -1710,20 +2023,41 @@ with gr.Blocks(title="GroupMate") as demo:
     welcome_join.click(_advance, outputs=[step_welcome, step_join])
     cg_back.click(_advance, outputs=[step_create, step_welcome])
     jn_back.click(_advance, outputs=[step_join, step_welcome])
-    cg_next.click(_advance, outputs=[step_create, step_members])
-    am_next.click(_advance, outputs=[step_members, step_suits])
-    ss_next.click(_advance, outputs=[step_suits, step_shell])
-    am_back.click(_advance, outputs=[step_members, step_create])
-    ss_back.click(_advance, outputs=[step_suits, step_members])
+    cg_next.click(_advance, outputs=[step_create, step_suits])
+    ss_next.click(_advance, outputs=[step_suits, step_shell]).then(
+        get_home_view,
+        inputs=[shared_group_id, shared_name],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
+    )
+    ss_back.click(_advance, outputs=[step_suits, step_welcome])
     settings_restart.click(_advance, outputs=[step_shell, step_welcome])
 
-    nav_home.click(_nav_to(0), outputs=PAGES)
-    nav_progress.click(_nav_to(1), outputs=PAGES)
-    nav_chat.click(_nav_to(2), outputs=PAGES)
-    nav_files.click(_nav_to(3), outputs=PAGES)
-    nav_request_help.click(_nav_to(4), outputs=PAGES)
-    nav_offer_help.click(_nav_to(5), outputs=PAGES)
-    nav_settings.click(_nav_to(6), outputs=PAGES)
+    nav_home.click(_nav_to(0), outputs=PAGES + NAV_BUTTONS).then(
+        get_home_view,
+        inputs=[shared_group_id, shared_name],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
+    )
+    nav_progress.click(_nav_to(1), outputs=PAGES + NAV_BUTTONS).then(
+        get_dashboard, inputs=shared_group_id, outputs=[gp_progress, gp_members, gp_countdown]
+    ).then(get_group_name, inputs=shared_group_id, outputs=gp_name_heading)
+    nav_chat.click(_nav_to(2), outputs=PAGES + NAV_BUTTONS).then(
+        get_group_chat, inputs=[shared_group_id, shared_name], outputs=gc_feed
+    ).then(get_ring_and_countdown, inputs=shared_group_id, outputs=[gc_group_ring, gc_countdown]).then(
+        get_group_name, inputs=shared_group_id, outputs=gc_name_heading
+    )
+    nav_files.click(_nav_to(3), outputs=PAGES + NAV_BUTTONS).then(
+        list_files, inputs=shared_group_id, outputs=fl_table
+    ).then(get_ring_and_countdown, inputs=shared_group_id, outputs=[fl_group_ring, fl_countdown]).then(
+        get_group_name, inputs=shared_group_id, outputs=fl_name_heading
+    )
+    nav_request_help.click(_nav_to(4), outputs=PAGES + NAV_BUTTONS)
+    nav_offer_help.click(_nav_to(5), outputs=PAGES + NAV_BUTTONS).then(
+        list_open_help_requests, inputs=shared_group_id, outputs=oh_table
+    )
+    nav_settings.click(_nav_to(6), outputs=PAGES + NAV_BUTTONS).then(
+        lambda gid, nm: (gid, nm), inputs=[shared_group_id, shared_name],
+        outputs=[settings_group_id_display, settings_name_display],
+    )
 
 
 if __name__ == "__main__":

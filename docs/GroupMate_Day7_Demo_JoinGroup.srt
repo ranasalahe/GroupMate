@@ -1,0 +1,32 @@
+1
+00:00:00,000 --> 00:00:03,500
+How easy it is for a teammate to join, chat, and support the group.
+
+2
+00:00:03,500 --> 00:00:07,500
+One tap to join a project your teammate already created.
+
+3
+00:00:07,500 --> 00:00:12,500
+Paste the link (or scan the QR code), type your name, and tap Join — that's it.
+
+4
+00:00:12,500 --> 00:00:16,500
+No separate onboarding maze — straight to the shared dashboard.
+
+5
+00:00:16,500 --> 00:00:21,000
+Everyone in the group shares one live chat feed.
+
+6
+00:00:21,000 --> 00:00:26,000
+One-on-one messages stay separate from the group feed — pick a teammate and reply privately.
+
+7
+00:00:26,000 --> 00:00:31,500
+Falling more than 20% behind the group's pace? GroupMate flags it automatically — no one has to guess who's stuck.
+
+8
+00:00:31,500 --> 00:00:35,500
+GroupMate — built with Gradio, Supabase, and the OpenAI API.
+
