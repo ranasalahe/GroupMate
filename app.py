@@ -1915,11 +1915,17 @@ with gr.Blocks(title="GroupMate") as demo:
         None,
         js="""
         () => {
+            // Default to light regardless of the visitor's OS/browser
+            // preference — Gradio auto-applies a 'dark' class on first
+            // load based on prefers-color-scheme, so this always
+            // re-asserts the saved choice (or light, if none saved yet).
             try {
                 const saved = localStorage.getItem('groupmate_theme');
                 if (saved === 'dark') { document.body.classList.add('dark'); }
-                else if (saved === 'light') { document.body.classList.remove('dark'); }
-            } catch (e) {}
+                else { document.body.classList.remove('dark'); }
+            } catch (e) {
+                document.body.classList.remove('dark');
+            }
         }
         """,
     )
