@@ -312,6 +312,32 @@ def submit_strong_suits(group_id: str, member_name: str, selected_tags: list[str
     return status
 
 
+def _distribution_ready(group_id: str) -> bool:
+    """True once every member has submitted and tasks exist for the group."""
+    if not group_id.strip():
+        return False
+    try:
+        db = get_supabase()
+        tasks = db.table("tasks").select("id").eq("group_id", group_id.strip()).limit(1).execute()
+        return bool(tasks.data)
+    except Exception:
+        return False
+
+
+def try_enter_dashboard(group_id: str):
+    """Advance to the dashboard only once tasks have actually been
+    distributed; otherwise stay on Strong Suits with a pending message so
+    nobody lands on an empty dashboard while teammates are still choosing."""
+    if _distribution_ready(group_id):
+        return gr.update(visible=False), gr.update(visible=True), ""
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        "⏳ Waiting for other GroupMates to select their strong suits — "
+        "tasks will be divided automatically once everyone's submitted.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Task distribution
 # ---------------------------------------------------------------------------
@@ -1739,10 +1765,9 @@ with gr.Blocks(title="GroupMate") as demo:
     with gr.Column(visible=False, elem_classes="gm-fade") as step_suits:
         gr.Markdown("## Strong Suits")
         gr.Markdown(
-            "Load the group's skill tags, then pick the ones that match your "
-            "strengths. Once everyone submits, tasks are distributed automatically."
+            "Pick the tags that match your strengths. Once everyone submits, "
+            "tasks are distributed automatically."
         )
-        ss_load_button = gr.Button("Load Available Tags")
         ss_load_status = gr.Markdown()
         ss_tags = gr.CheckboxGroup(choices=[], label="Select your strong suits")
         ss_submit = gr.Button("Submit Strong Suits", variant="primary")
@@ -1960,12 +1985,15 @@ with gr.Blocks(title="GroupMate") as demo:
         join_group_ui,
         inputs=[jn_input, jn_name],
         outputs=[shared_group_id, shared_name, jn_status, step_join, step_suits],
-    )
-    ss_load_button.click(
-        load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status]
-    )
+    ).then(load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status])
     ss_submit.click(
         submit_strong_suits, inputs=[shared_group_id, shared_name, ss_tags], outputs=ss_status
+    ).then(
+        try_enter_dashboard, inputs=shared_group_id, outputs=[step_suits, step_shell, ss_status]
+    ).then(
+        get_home_view,
+        inputs=[shared_group_id, shared_name],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
     )
     home_refresh.click(
         get_home_view,
@@ -2051,8 +2079,12 @@ with gr.Blocks(title="GroupMate") as demo:
     welcome_join.click(_advance, outputs=[step_welcome, step_join])
     cg_back.click(_advance, outputs=[step_create, step_welcome])
     jn_back.click(_advance, outputs=[step_join, step_welcome])
-    cg_next.click(_advance, outputs=[step_create, step_suits])
-    ss_next.click(_advance, outputs=[step_suits, step_shell]).then(
+    cg_next.click(_advance, outputs=[step_create, step_suits]).then(
+        load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status]
+    )
+    ss_next.click(
+        try_enter_dashboard, inputs=shared_group_id, outputs=[step_suits, step_shell, ss_status]
+    ).then(
         get_home_view,
         inputs=[shared_group_id, shared_name],
         outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
