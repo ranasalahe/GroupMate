@@ -324,6 +324,42 @@ def _distribution_ready(group_id: str) -> bool:
         return False
 
 
+def resume_session(request: gr.Request, group_id: str, member_name: str):
+    """Restore a previously-saved session (group + name) on page load, so
+    refreshing the browser doesn't lose your place and send you back to
+    Welcome. A shared join link in the URL always takes priority over
+    whatever was previously saved."""
+    try:
+        deep_link_group = dict(request.query_params).get("group", "") if request else ""
+    except Exception:
+        deep_link_group = ""
+    if deep_link_group:
+        return gr.update(), gr.update(), gr.update()
+
+    group_id = group_id.strip()
+    member_name = member_name.strip()
+    if not group_id or not member_name:
+        return gr.update(), gr.update(), gr.update()
+
+    try:
+        db = get_supabase()
+        member = (
+            db.table("members")
+            .select("id")
+            .eq("group_id", group_id)
+            .ilike("name", member_name)
+            .execute()
+        )
+    except Exception:
+        return gr.update(), gr.update(), gr.update()
+    if not member.data:
+        return gr.update(), gr.update(), gr.update()
+
+    if _distribution_ready(group_id):
+        return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
+    return gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+
+
 def try_enter_dashboard(group_id: str):
     """Advance to the dashboard only once tasks have actually been
     distributed; otherwise stay on Strong Suits with a pending message so
@@ -1962,6 +1998,28 @@ with gr.Blocks(title="GroupMate") as demo:
         None,
         js="""
         () => {
+            try {
+                return [
+                    localStorage.getItem('groupmate_group') || '',
+                    localStorage.getItem('groupmate_name') || '',
+                ];
+            } catch (e) { return ['', '']; }
+        }
+        """,
+        outputs=[shared_group_id, shared_name],
+    ).then(
+        resume_session, inputs=[shared_group_id, shared_name], outputs=[step_welcome, step_suits, step_shell]
+    ).then(
+        load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status]
+    ).then(
+        get_home_view,
+        inputs=[shared_group_id, shared_name],
+        outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
+    )
+    demo.load(
+        None,
+        js="""
+        () => {
             // Default to light regardless of the visitor's OS/browser
             // preference — Gradio auto-applies a 'dark' class on first
             // load based on prefers-color-scheme, so this always
@@ -1980,12 +2038,34 @@ with gr.Blocks(title="GroupMate") as demo:
         create_group_ui,
         inputs=[cg_name, cg_description, cg_deadline, cg_admin_name, cg_members],
         outputs=[shared_group_id, cg_status, cg_tags, cg_join_url, cg_qr],
-    ).then(lambda n: n.strip(), inputs=cg_admin_name, outputs=shared_name)
+    ).then(lambda n: n.strip(), inputs=cg_admin_name, outputs=shared_name).then(
+        None,
+        js="""
+        (gid, name) => {
+            try {
+                localStorage.setItem('groupmate_group', gid);
+                localStorage.setItem('groupmate_name', name);
+            } catch (e) {}
+        }
+        """,
+        inputs=[shared_group_id, shared_name],
+    )
     jn_button.click(
         join_group_ui,
         inputs=[jn_input, jn_name],
         outputs=[shared_group_id, shared_name, jn_status, step_join, step_suits],
-    ).then(load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status])
+    ).then(load_group_tags, inputs=shared_group_id, outputs=[ss_tags, ss_load_status]).then(
+        None,
+        js="""
+        (gid, name) => {
+            try {
+                localStorage.setItem('groupmate_group', gid);
+                localStorage.setItem('groupmate_name', name);
+            } catch (e) {}
+        }
+        """,
+        inputs=[shared_group_id, shared_name],
+    )
     ss_submit.click(
         submit_strong_suits, inputs=[shared_group_id, shared_name, ss_tags], outputs=ss_status
     ).then(
@@ -2072,6 +2152,16 @@ with gr.Blocks(title="GroupMate") as demo:
         leave_group, inputs=[shared_group_id, shared_name], outputs=leave_status
     ).then(lambda: gr.update(visible=False), outputs=leave_confirm_panel).then(
         _advance, outputs=[step_shell, step_welcome]
+    ).then(
+        None,
+        js="""
+        () => {
+            try {
+                localStorage.removeItem('groupmate_group');
+                localStorage.removeItem('groupmate_name');
+            } catch (e) {}
+        }
+        """,
     )
 
     # --- Wiring: step navigation ------------------------------------------------
@@ -2090,7 +2180,17 @@ with gr.Blocks(title="GroupMate") as demo:
         outputs=[home_progress_ring, home_countdown_ring, home_tasks, home_task_grid, home_status, home_name_heading],
     )
     ss_back.click(_advance, outputs=[step_suits, step_welcome])
-    settings_restart.click(_advance, outputs=[step_shell, step_welcome])
+    settings_restart.click(_advance, outputs=[step_shell, step_welcome]).then(
+        None,
+        js="""
+        () => {
+            try {
+                localStorage.removeItem('groupmate_group');
+                localStorage.removeItem('groupmate_name');
+            } catch (e) {}
+        }
+        """,
+    )
 
     nav_home.click(_nav_to(0), outputs=PAGES + NAV_BUTTONS).then(
         get_home_view,
