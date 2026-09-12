@@ -1406,10 +1406,7 @@ body.dark .gradio-container button.secondary {
 }
 
 .gm-card, .gm-bubble-mine, .gm-bubble-theirs, .gm-plain-circle {
-    box-shadow: 0 2px 4px rgba(60, 45, 20, 0.06), 0 6px 18px rgba(60, 45, 20, 0.08) !important;
-}
-body.dark .gm-card, body.dark .gm-bubble-mine, body.dark .gm-bubble-theirs, body.dark .gm-plain-circle {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.32) !important;
+    box-shadow: var(--gm-card-shadow, 0 2px 4px rgba(60, 45, 20, 0.06), 0 6px 18px rgba(60, 45, 20, 0.08)) !important;
 }
 .gm-ring-progress, .gm-ring-track {
     filter: drop-shadow(0 2px 3px rgba(60, 45, 20, 0.15));
@@ -1540,9 +1537,9 @@ body.dark .sidebar-col button.gm-nav-active {
 }
 .gm-plain-circle {
     border-radius: 50%;
-    border: 2px solid #8B6F47;
-    background: #FCF8EF;
-    color: #1A1A1A;
+    border: 2px solid var(--gm-card-border);
+    background: var(--gm-card-bg);
+    color: var(--gm-card-color);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1552,72 +1549,60 @@ body.dark .sidebar-col button.gm-nav-active {
 }
 
 /* Custom HTML pieces (rings, chat bubbles, member cards) use these classes
-   instead of inline colors so the light/dark toggle actually reaches them. */
+   instead of inline colors so the light/dark toggle actually reaches them.
+   Colors are driven by CSS custom properties (set via JS on <html>) rather
+   than a `body.dark ...` ancestor selector: Gradio's CSS auto-scoping
+   rewrites multi-selector `body.dark X, body.dark Y` rules incorrectly
+   (it inserts its container-scoping prefix so `body` ends up expected as a
+   *descendant* of .gradio-container, which never matches) — confirmed via
+   getComputedStyle showing the light-mode values applied even with
+   `document.body.className === "dark"`. Custom properties sidestep that
+   entirely since each rule is a single plain class selector. */
+:root {
+    --gm-card-bg: #FCF8EF;
+    --gm-card-border: #8B6F47;
+    --gm-card-color: #1A1A1A;
+    --gm-bubble-mine-bg: #EAE0C7;
+    --gm-bubble-theirs-bg: #FCF8EF;
+    --gm-subdued-color: #57534A;
+    --gm-ring-track: #E6E1D6;
+    --gm-ring-progress: #8B6F47;
+    --gm-ring-text: #1A1A1A;
+    --gm-ring-label: #57534A;
+}
 .gm-card {
-    background: #FCF8EF;
-    border: 2px solid #8B6F47;
-    color: #1A1A1A;
+    background: var(--gm-card-bg);
+    border: 2px solid var(--gm-card-border);
+    color: var(--gm-card-color);
 }
 .gm-bubble-mine {
-    background: #EAE0C7;
-    border: 2px solid #8B6F47;
-    color: #1A1A1A;
+    background: var(--gm-bubble-mine-bg);
+    border: 2px solid var(--gm-card-border);
+    color: var(--gm-card-color);
 }
 .gm-bubble-theirs {
-    background: #FCF8EF;
-    border: 2px solid #8B6F47;
-    color: #1A1A1A;
+    background: var(--gm-bubble-theirs-bg);
+    border: 2px solid var(--gm-card-border);
+    color: var(--gm-card-color);
 }
 .gm-subdued {
-    color: #57534A;
+    color: var(--gm-subdued-color);
 }
 .gm-ring-track {
-    stroke: #E6E1D6;
+    stroke: var(--gm-ring-track);
 }
 .gm-ring-progress {
-    stroke: #8B6F47;
+    stroke: var(--gm-ring-progress);
 }
 .gm-ring-text {
-    fill: #1A1A1A;
+    fill: var(--gm-ring-text);
 }
 .gm-ring-label {
-    color: #57534A;
+    color: var(--gm-ring-label);
 }
 .gm-danger-btn {
     color: #B03A2E !important;
     border-color: #B03A2E !important;
-}
-
-body.dark .gm-card,
-body.dark .gm-bubble-theirs {
-    background: #2A2419;
-    border-color: #B08F5A;
-    color: #F2EFE9;
-}
-body.dark .gm-bubble-mine {
-    background: #3A3222;
-    border-color: #B08F5A;
-    color: #F2EFE9;
-}
-body.dark .gm-subdued {
-    color: #C9C0AA;
-}
-body.dark .gm-ring-track {
-    stroke: #3A3222;
-}
-body.dark .gm-ring-progress {
-    stroke: #B08F5A;
-}
-body.dark .gm-ring-text {
-    fill: #F2EFE9;
-}
-body.dark .gm-ring-label {
-    color: #C9C0AA;
-}
-body.dark .gm-plain-circle {
-    border-color: #B08F5A;
-    background: #2A2419;
-    color: #F2EFE9;
 }
 """
 
@@ -2020,16 +2005,45 @@ with gr.Blocks(title="GroupMate") as demo:
         None,
         js="""
         () => {
+            // Gradio's own CSS auto-scoping mangles `body.dark .gm-X` rules
+            // (it rewrites them so `body` would need to be a descendant of
+            // .gradio-container, which is structurally impossible), so the
+            // dark-mode colors for custom .gm-* classes are applied here via
+            // CSS custom properties on <html> instead of relying on a
+            // `body.dark` ancestor selector.
+            window.__gmApplyTheme = (isDark) => {
+                const root = document.documentElement.style;
+                if (isDark) {
+                    root.setProperty('--gm-card-bg', '#2A2419');
+                    root.setProperty('--gm-card-border', '#B08F5A');
+                    root.setProperty('--gm-card-color', '#F2EFE9');
+                    root.setProperty('--gm-bubble-mine-bg', '#3A3222');
+                    root.setProperty('--gm-bubble-theirs-bg', '#2A2419');
+                    root.setProperty('--gm-subdued-color', '#C9C0AA');
+                    root.setProperty('--gm-ring-track', '#3A3222');
+                    root.setProperty('--gm-ring-progress', '#B08F5A');
+                    root.setProperty('--gm-ring-text', '#F2EFE9');
+                    root.setProperty('--gm-ring-label', '#C9C0AA');
+                    root.setProperty('--gm-card-shadow', '0 2px 4px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.32)');
+                } else {
+                    ['--gm-card-bg', '--gm-card-border', '--gm-card-color', '--gm-bubble-mine-bg',
+                     '--gm-bubble-theirs-bg', '--gm-subdued-color', '--gm-ring-track', '--gm-ring-progress',
+                     '--gm-ring-text', '--gm-ring-label', '--gm-card-shadow'].forEach((p) => root.removeProperty(p));
+                }
+            };
             // Default to light regardless of the visitor's OS/browser
             // preference — Gradio auto-applies a 'dark' class on first
             // load based on prefers-color-scheme, so this always
             // re-asserts the saved choice (or light, if none saved yet).
             try {
                 const saved = localStorage.getItem('groupmate_theme');
-                if (saved === 'dark') { document.body.classList.add('dark'); }
+                const isDark = saved === 'dark';
+                if (isDark) { document.body.classList.add('dark'); }
                 else { document.body.classList.remove('dark'); }
+                window.__gmApplyTheme(isDark);
             } catch (e) {
                 document.body.classList.remove('dark');
+                window.__gmApplyTheme(false);
             }
         }
         """,
@@ -2123,8 +2137,10 @@ with gr.Blocks(title="GroupMate") as demo:
         js="""
         () => {
             document.body.classList.toggle('dark');
+            const isDark = document.body.classList.contains('dark');
+            if (window.__gmApplyTheme) { window.__gmApplyTheme(isDark); }
             try {
-                localStorage.setItem('groupmate_theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+                localStorage.setItem('groupmate_theme', isDark ? 'dark' : 'light');
             } catch (e) {}
         }
         """,
